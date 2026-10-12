@@ -1,0 +1,146 @@
+//! IdeaCraft headless.
+//!
+//! ```text
+//! ideacraft-cli commands                                   # every command and its parameters
+//! ideacraft-cli templates                                  # built-in templates
+//! ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
+//! ideacraft-cli convert IN OUT                             # import/export by extension
+//! ideacraft-cli outline FILE                               # Markdown outline on stdout
+//! ```
+//! `--in` and `convert` read IdeaCraft maps and every importable format (FreeMind/Freeplane,
+//! XMind, CmapTools CXL, OPML, Markdown, Mermaid); `--out`/`convert` write by extension:
+//! `.ideacraft.json`/`.json`, `.md`, `.opml` or `.mm`.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+use std::process::ExitCode;
+
+use ideacraft_engine::core::Map;
+use ideacraft_engine::formats::{self, templates};
+use ideacraft_engine::{COMMANDS, Session};
+use serde_json::{Value, json};
+
+const USAGE: &str = "usage:
+  ideacraft-cli commands
+  ideacraft-cli templates
+  ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
+  ideacraft-cli convert IN OUT
+  ideacraft-cli outline FILE";
+
+fn read(path: &str) -> Result<Map, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    formats::import_bytes(path, &bytes).map(|(m, _)| m).map_err(|e| format!("{path}: {e}"))
+}
+
+/// The map in the format the file name asks for.
+fn render(map: &Map, path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".txt") {
+        formats::to_markdown(map)
+    } else if lower.ends_with(".opml") {
+        formats::to_opml(map)
+    } else if lower.ends_with(".mm") {
+        formats::to_freemind(map)
+    } else {
+        map.to_json()
+    }
+}
+
+fn write(map: &Map, path: &str) -> Result<(), String> {
+    std::fs::write(path, render(map, path)).map_err(|e| format!("{path}: {e}"))
+}
+
+fn run(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("commands") => {
+            for c in COMMANDS {
+                println!("{:<22} {:<14} {}", c.id, c.shortcut, c.params);
+            }
+            Ok(())
+        }
+        Some("templates") => {
+            for t in templates::ALL {
+                println!("{:<14} {:<18} {}", t.id, t.name, t.description);
+            }
+            Ok(())
+        }
+        Some("outline") => {
+            let path = args.get(1).ok_or(USAGE)?;
+            print!("{}", formats::to_markdown(&read(path)?));
+            Ok(())
+        }
+        Some("convert") => {
+            let (Some(input), Some(output)) = (args.get(1), args.get(2)) else { return Err(USAGE.into()) };
+            write(&read(input)?, output)
+        }
+        Some("run") => {
+            let mut session = Session::default();
+            let mut out = None;
+            let mut it = args.iter().skip(1);
+            while let Some(flag) = it.next() {
+                match flag.as_str() {
+                    "--sample" => session = Session::new(Map::sample()),
+                    "--template" => {
+                        let id = it.next().ok_or("--template needs an id (see `ideacraft-cli templates`)")?;
+                        session = Session::new(templates::find(id).ok_or_else(|| format!("no template {id:?}"))?.build());
+                    }
+                    "--in" => session = Session::new(read(it.next().ok_or("--in needs a file")?)?),
+                    "--out" => out = Some(it.next().ok_or("--out needs a file")?.clone()),
+                    "--cmd" => {
+                        let spec = it.next().ok_or("--cmd needs id={json}")?;
+                        let (id, params) = spec.split_once('=').unwrap_or((spec, "{}"));
+                        let params: Value = serde_json::from_str(params).map_err(|e| format!("{id}: bad JSON: {e}"))?;
+                        let result = session.execute(id, &params).map_err(|e| format!("{id}: {e}"))?;
+                        println!("{}", json!({"command": id, "result": result}));
+                    }
+                    other => return Err(format!("unknown option {other}\n{USAGE}")),
+                }
+            }
+            match out {
+                Some(path) => write(session.map(), &path),
+                None => Ok(()),
+            }
+        }
+        _ => Err(USAGE.to_string()),
+    }
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_picks_the_format_from_the_extension() {
+        let map = Map::sample();
+        assert!(render(&map, "a.md").starts_with("# IdeaCraft\n\n- Canvas"));
+        assert!(render(&map, "a.OPML").contains("<opml"));
+        assert!(render(&map, "a.mm").starts_with("<map"));
+        assert!(render(&map, "a.ideacraft.json").contains("\"ideacraft\""));
+    }
+
+    #[test]
+    fn bad_arguments_are_errors_not_panics() {
+        for args in [
+            vec![],
+            vec!["run", "--in"],
+            vec!["run", "--cmd", "node.add={"],
+            vec!["run", "--cmd", "nope"],
+            vec!["outline"],
+            vec!["run", "--template", "x"],
+            vec!["convert", "a"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            assert!(run(&args).is_err(), "{args:?}");
+        }
+    }
+}
