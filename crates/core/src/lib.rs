@@ -9,12 +9,13 @@ mod color;
 mod error;
 pub mod layout;
 mod map;
+pub mod netcheck;
 pub mod route;
 pub mod stencil;
 
 pub use color::Rgb;
 pub use error::{Error, Result};
-pub use map::{Arrows, Edge, EdgeId, EdgeStyle, LineStyle, Map, Mode, Node, NodeId, Point, Route, Shape, Size, Status};
+pub use map::{Arrows, Edge, EdgeId, EdgeStyle, Layer, LineStyle, MAX_LAYERS, Map, Mode, Node, NodeId, Point, Route, Shape, Size, Status};
 
 /// Limits applied to every document, whoever built it: files, commands and the CLI are hostile.
 pub mod limits {

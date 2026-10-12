@@ -50,7 +50,11 @@ between the stages, lay it out radially and save it as ciclo.ideacraft.json and 
 | `link_ideas` / `unlink` | Labelled concept-map links between any two ideas |
 | `layout` | `tree` or `radial` |
 | `export` | `markdown`, `opml`, `freemind`, `drawio` (for draw.io / Visio), `svg` (a picture of the map) or `ideacraft` JSON |
-| `list_stencils` | The shape library for diagrams (`category`: basic, flowchart, network, cloud, people; `language`) |
+| `list_stencils` | The shape library for diagrams (`category`: basic, flowchart, network, cloud, people, uml, bpmn; `language`) |
+| `build_map` | A whole map or diagram from one nested spec: `title`, `mode`, `layout`, `nodes` (label, kind, colour, shape, x/y, props, children…) and `links` (from/to by label, path or id, with label and style); `append` adds to the open map. Returns the outline and any unresolved links |
+| `validate_network` | Checks the diagram's addresses, masks, gateways, VLANs and interfaces (`language`): counts and findings with codes, messages and the shapes/links involved |
+| `set_layer` | Move shapes to a layer (`layer`, `null` for the default; created when missing) and/or show, hide, lock or unlock it (`visible`, `locked`); returns the layers |
+| `group` | Group the given shapes so they select and move together, or `ungroup` them |
 | `add_shape` | A diagram shape from a stencil (`kind`, e.g. `net.router`, `flow.decision`, `basic.container`) with label, position, size and `props` (ip, vlan, status…); switches to diagram mode |
 | `style_link` | Line (solid/dashed/dotted), arrows (none/end/start/both), route (straight/orthogonal/curved), colour, width, label of a link |
 | `align` | Align several shapes on an edge, distribute them along x or y, snap them to the grid |
@@ -59,6 +63,33 @@ between the stages, lay it out radially and save it as ciclo.ideacraft.json and 
 
 Resources: `ideacraft://map` (the outline with ids, Markdown) and `ideacraft://map.json` (the
 full map). Protocol revisions 2025-06-18, 2025-03-26 and 2024-11-05 are accepted.
+
+## Prompts (natural language → map)
+
+`prompts/list` offers three prompts an MCP client can run (Claude Desktop shows them as slash
+commands); each one is a short procedure the model follows with the tools above.
+
+| Prompt | Arguments | What it does |
+|---|---|---|
+| `create_map` | `description` (required), `kind` (`auto`, `map`, `diagram`), `language`, `save_as` | From a plain-language brief, decides between a mind map and a diagram, picks a template when one fits, builds the whole map with `build_map`, lays it out, shows the outline and optionally saves it |
+| `design_network` | `description` (required), `addressing` (optional sites/subnets/VLANs), `language`, `save_as` | Draws a network: layer-3 devices, switches, zones as containers, hosts with `ip`, `gateway`, `vlan`, `status`, interfaces on the network devices, VLAN-labelled links; then runs `validate_network` and fixes what it finds |
+| `check_network` | `language` | Runs the check on the open diagram and explains every finding with a concrete fix |
+
+Example: *"/create_map a concept map of photosynthesis for a 14-year-old, in Italian"* or
+*"/design_network a branch office: firewall, core switch, server VLAN 10 (192.168.10.0/24),
+office VLAN 20 (192.168.20.0/24), Wi-Fi VLAN 30, twenty workstations"*.
+
+### What the check understands
+
+Properties on shapes: `ip` / `ips` / `address` (`10.0.1.5`, `10.0.1.5/24`, `10.0.1.5 255.255.255.0`,
+several separated by commas), `mask` / `netmask` / `subnet`, `gateway` / `gw`, `vlan` / `vlans`
+(`10`, `10,20`, `trunk`), `interfaces` / `ports` (`Gi0/1=10.0.1.1/24 vlan 10; Gi0/24 trunk 10,20;
+eth0 192.168.1.1/24`). Link labels: `VLAN 10`, `VLAN 10/20`, interface names on either end
+(`Gi0/1 - eth0`, `eth1 ↔ Gi0/1`). Findings (`code`): `bad-address`, `bad-mask`,
+`duplicate-address`, `network-address`, `broadcast-address`, `subnet-mismatch`,
+`gateway-outside-subnet`, `bad-vlan`, `vlan-mismatch`, `unknown-interface`, `interface-reused`,
+`duplicate-interface`, `no-address`, `isolated`. Routers, firewalls, internet/WAN/VPN clouds
+route between subnets; switches, access points, racks and UPSes forward without an address.
 
 For diagrams, ask for example: *"Draw the network of a branch office: internet, firewall, a core
 switch, two servers in a 'Server room' container and six workstations, with IP addresses and

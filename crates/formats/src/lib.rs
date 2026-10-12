@@ -26,7 +26,7 @@ mod xml;
 pub use drawio::{export as to_drawio, import as from_drawio};
 pub use export::{to_freemind, to_markdown, to_opml};
 use ideacraft_core::Map;
-pub use svg::{measure, to_svg};
+pub use svg::{measure, measure_all, to_svg};
 
 /// Largest file read, in bytes.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;

@@ -6,6 +6,7 @@
 //! ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
 //! ideacraft-cli convert IN OUT                             # import/export by extension
 //! ideacraft-cli outline FILE                               # Markdown outline on stdout
+//! ideacraft-cli check FILE [--lang it]                   # validate a network diagram (ip, vlan, interfaces)
 //! ideacraft-cli mcp [--in FILE]                            # MCP server on stdio, for AI agents
 //! ```
 //! `--in` and `convert` read IdeaCraft maps and every importable format (FreeMind/Freeplane,
@@ -26,6 +27,7 @@ const USAGE: &str = "usage:
   ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
   ideacraft-cli convert IN OUT
   ideacraft-cli outline FILE
+  ideacraft-cli check FILE [--lang it]   (validate a network diagram: ip, subnets, vlan, gateways, interfaces)
   ideacraft-cli mcp [--in FILE | FILE] [--template ID]   (Model Context Protocol server on stdio)";
 
 fn read(path: &str) -> Result<Map, String> {
@@ -99,6 +101,23 @@ fn run(args: &[String]) -> Result<(), String> {
             print!("{}", formats::to_markdown(&read(path)?));
             Ok(())
         }
+        Some("check") => {
+            let path = args.get(1).ok_or(USAGE)?;
+            let italian = args.iter().skip(2).any(|a| a == "it" || a == "--lang=it") || args.windows(2).any(|w| w[0] == "--lang" && w[1] == "it");
+            let map = read(path)?;
+            let findings = ideacraft_engine::core::netcheck::validate(&map);
+            for f in &findings {
+                let sev = match f.severity {
+                    ideacraft_engine::core::netcheck::Severity::Error => "ERROR",
+                    ideacraft_engine::core::netcheck::Severity::Warning => "WARN ",
+                    ideacraft_engine::core::netcheck::Severity::Info => "info ",
+                };
+                println!("{sev} [{}] {}", f.code.name(), f.message(italian));
+            }
+            let errors = findings.iter().filter(|f| f.severity == ideacraft_engine::core::netcheck::Severity::Error).count();
+            println!("{} findings, {errors} errors", findings.len());
+            if errors > 0 { Err(String::new()) } else { Ok(()) }
+        }
         Some("convert") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else { return Err(USAGE.into()) };
             write(&read(input)?, output)
@@ -140,7 +159,9 @@ fn main() -> ExitCode {
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{e}");
+            if !e.is_empty() {
+                eprintln!("{e}");
+            }
             ExitCode::FAILURE
         }
     }
@@ -167,6 +188,8 @@ mod tests {
             vec!["run", "--cmd", "node.add={"],
             vec!["run", "--cmd", "nope"],
             vec!["outline"],
+            vec!["check"],
+            vec!["check", "/nope.mm"],
             vec!["run", "--template", "x"],
             vec!["convert", "a"],
         ] {

@@ -123,6 +123,8 @@ fn main() {
                     Some("shapes") => Some(ideacraft_ui_egui::SidePanel::Shapes),
                     Some("elements") => Some(ideacraft_ui_egui::SidePanel::Elements),
                     Some("layout") => Some(ideacraft_ui_egui::SidePanel::Layout),
+                    Some("layers") => Some(ideacraft_ui_egui::SidePanel::Layers),
+                    Some("check") => Some(ideacraft_ui_egui::SidePanel::Check),
                     Some("files") => Some(ideacraft_ui_egui::SidePanel::Files),
                     _ => None,
                 };
@@ -143,6 +145,9 @@ fn main() {
     }
     app.language = language;
     app.dark = dark;
+    if app.sidebar == Some(ideacraft_ui_egui::SidePanel::Check) {
+        app.check_network();
+    }
     let ctx = egui::Context::default();
     let mut textures = HashMap::new();
     let mut last = None;

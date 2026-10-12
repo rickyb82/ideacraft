@@ -374,11 +374,35 @@ pub struct Node {
     /// Drawing order: higher is in front; equal z draws in id order.
     #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub z: i32,
+    /// The layer this node is on; `None` is the default layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// Nodes sharing a group id select and move together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u64>,
 }
 
 fn is_zero_i32(v: &i32) -> bool {
     *v == 0
 }
+
+/// A named layer: nodes on a hidden layer are not drawn, nodes on a locked one are not edited
+/// from the canvas.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Layer {
+    pub name: String,
+    #[serde(default = "yes")]
+    pub visible: bool,
+    #[serde(default)]
+    pub locked: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Most layers a map can have.
+pub const MAX_LAYERS: usize = 64;
 
 impl Node {
     /// The node's rectangle half-size when it has an explicit size.
@@ -424,6 +448,7 @@ pub struct Edge {
 pub struct Map {
     title: String,
     mode: Mode,
+    layers: Vec<Layer>,
     nodes: BTreeMap<NodeId, Node>,
     edges: BTreeMap<EdgeId, Edge>,
     next_id: u64,
@@ -443,7 +468,9 @@ struct File {
     title: String,
     #[serde(default)]
     mode: Mode,
-    /// Next free id, so ids of deleted ideas are never reused.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    layers: Vec<Layer>,
+    /// Next free id, so ideas of deleted ideas are never reused.
     #[serde(default, rename = "nextId")]
     next_id: u64,
     #[serde(default)]
@@ -467,7 +494,7 @@ fn clean_kind(kind: &str) -> Option<String> {
 
 impl Map {
     pub fn new(title: &str) -> Self {
-        Self { title: clean_label(title), mode: Mode::Map, nodes: BTreeMap::new(), edges: BTreeMap::new(), next_id: 1 }
+        Self { title: clean_label(title), mode: Mode::Map, layers: Vec::new(), nodes: BTreeMap::new(), edges: BTreeMap::new(), next_id: 1 }
     }
 
     /// A small built-in example (original content), used by `--sample` and tests.
@@ -522,6 +549,147 @@ impl Map {
 
     pub fn set_mode(&mut self, mode: Mode) {
         self.mode = mode;
+    }
+
+    // ---- layers ------------------------------------------------------------------------------
+
+    pub fn layers(&self) -> &[Layer] {
+        &self.layers
+    }
+
+    pub fn layer(&self, name: &str) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.name == name)
+    }
+
+    /// Adds a layer (no-op when it exists).
+    pub fn add_layer(&mut self, name: &str) -> Result<()> {
+        let name = clean_prop(name);
+        if name.is_empty() {
+            return Err(Error::Format("a layer needs a name".into()));
+        }
+        if self.layer(&name).is_some() {
+            return Ok(());
+        }
+        if self.layers.len() >= MAX_LAYERS {
+            return Err(Error::Full("layers"));
+        }
+        self.layers.push(Layer { name, visible: true, locked: false });
+        Ok(())
+    }
+
+    /// Removes a layer; its nodes go back to the default layer.
+    pub fn remove_layer(&mut self, name: &str) -> Result<()> {
+        let i = self
+            .layers
+            .iter()
+            .position(|l| l.name == name)
+            .ok_or_else(|| Error::Format(format!("no layer {:?}", name.chars().take(40).collect::<String>())))?;
+        self.layers.remove(i);
+        for n in self.nodes.values_mut() {
+            if n.layer.as_deref() == Some(name) {
+                n.layer = None;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn rename_layer(&mut self, name: &str, new: &str) -> Result<()> {
+        let new = clean_prop(new);
+        if new.is_empty() {
+            return Err(Error::Format("a layer needs a name".into()));
+        }
+        if self.layer(&new).is_some() && new != name {
+            return Err(Error::Format(format!("layer {new:?} exists")));
+        }
+        let l = self
+            .layers
+            .iter_mut()
+            .find(|l| l.name == name)
+            .ok_or_else(|| Error::Format(format!("no layer {:?}", name.chars().take(40).collect::<String>())))?;
+        l.name = new.clone();
+        for n in self.nodes.values_mut() {
+            if n.layer.as_deref() == Some(name) {
+                n.layer = Some(new.clone());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_layer_visible(&mut self, name: &str, visible: bool) -> Result<()> {
+        let l = self
+            .layers
+            .iter_mut()
+            .find(|l| l.name == name)
+            .ok_or_else(|| Error::Format(format!("no layer {:?}", name.chars().take(40).collect::<String>())))?;
+        l.visible = visible;
+        Ok(())
+    }
+
+    pub fn set_layer_locked(&mut self, name: &str, locked: bool) -> Result<()> {
+        let l = self
+            .layers
+            .iter_mut()
+            .find(|l| l.name == name)
+            .ok_or_else(|| Error::Format(format!("no layer {:?}", name.chars().take(40).collect::<String>())))?;
+        l.locked = locked;
+        Ok(())
+    }
+
+    /// Moves a node to a layer (`None`: the default layer); the layer is created when missing.
+    pub fn set_node_layer(&mut self, id: NodeId, layer: Option<&str>) -> Result<()> {
+        self.node(id).ok_or(Error::NoNode(id.0))?;
+        let layer = match layer.map(clean_prop).filter(|l| !l.is_empty()) {
+            Some(l) => {
+                self.add_layer(&l)?;
+                Some(l)
+            }
+            None => None,
+        };
+        self.node_mut(id)?.layer = layer;
+        Ok(())
+    }
+
+    /// A node's layer is locked (not editable from the canvas).
+    pub fn is_locked(&self, id: NodeId) -> bool {
+        self.node(id).and_then(|n| n.layer.as_deref()).and_then(|l| self.layer(l)).is_some_and(|l| l.locked)
+    }
+
+    // ---- groups ------------------------------------------------------------------------------
+
+    /// Puts the nodes in one new group (they leave any group they were in). Returns the group id.
+    pub fn group(&mut self, ids: &[NodeId]) -> Result<u64> {
+        if ids.len() < 2 {
+            return Err(Error::Format("a group needs at least two shapes".into()));
+        }
+        for id in ids {
+            self.node(*id).ok_or(Error::NoNode(id.0))?;
+        }
+        let gid = self.fresh_id()?;
+        for id in ids {
+            if let Some(n) = self.nodes.get_mut(id) {
+                n.group = Some(gid);
+            }
+        }
+        Ok(gid)
+    }
+
+    /// Dissolves the groups the nodes belong to.
+    pub fn ungroup(&mut self, ids: &[NodeId]) -> Result<()> {
+        let groups: BTreeSet<u64> = ids.iter().filter_map(|id| self.node(*id).and_then(|n| n.group)).collect();
+        for n in self.nodes.values_mut() {
+            if n.group.is_some_and(|g| groups.contains(&g)) {
+                n.group = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// Every node in the same group as `id` (including `id`).
+    pub fn group_members(&self, id: NodeId) -> Vec<NodeId> {
+        match self.node(id).and_then(|n| n.group) {
+            Some(g) => self.nodes.values().filter(|n| n.group == Some(g)).map(|n| n.id).collect(),
+            None => vec![id],
+        }
     }
 
     /// Nodes in drawing order: containers first, then by `z`, then by id.
@@ -598,6 +766,8 @@ impl Map {
                 size: None,
                 props: BTreeMap::new(),
                 z: 0,
+                layer: None,
+                group: None,
             },
         );
         Ok(id)
@@ -630,6 +800,7 @@ impl Map {
         n.id = new;
         n.pos = Point::new(n.pos.x + dx, n.pos.y + dy).clamped();
         n.collapsed = false;
+        n.group = None;
         self.nodes.insert(new, n);
         Ok(new)
     }
@@ -815,7 +986,9 @@ impl Map {
 
     /// Shown on the canvas: no ancestor is collapsed.
     pub fn is_visible(&self, id: NodeId) -> bool {
-        self.node(id).is_some() && self.ancestors(id).iter().all(|a| self.node(*a).is_some_and(|n| !n.collapsed))
+        let Some(n) = self.node(id) else { return false };
+        let layer_visible = n.layer.as_deref().and_then(|l| self.layer(l)).is_none_or(|l| l.visible);
+        layer_visible && self.ancestors(id).iter().all(|a| self.node(*a).is_some_and(|n| !n.collapsed))
     }
 
     pub fn to_json(&self) -> String {
@@ -824,6 +997,7 @@ impl Map {
             version: FORMAT_VERSION,
             title: self.title.clone(),
             mode: self.mode,
+            layers: self.layers.clone(),
             next_id: self.next_id,
             nodes: self.nodes.values().cloned().collect(),
             edges: self.edges.values().cloned().collect(),
@@ -843,6 +1017,12 @@ impl Map {
         }
         let mut map = Self::new(&file.title);
         map.mode = file.mode;
+        for l in file.layers.into_iter().take(MAX_LAYERS) {
+            let name = clean_prop(&l.name);
+            if !name.is_empty() && map.layer(&name).is_none() {
+                map.layers.push(Layer { name, ..l });
+            }
+        }
         let file_next = file.next_id;
         let mut max_id = 0u64;
         for mut n in file.nodes.into_iter().take(MAX_NODES) {
@@ -856,6 +1036,13 @@ impl Map {
             n.z = n.z.clamp(-1_000, 1_000);
             n.props =
                 n.props.iter().map(|(k, v)| (clean_prop(k), clean_prop(v))).filter(|(k, v)| !k.is_empty() && !v.is_empty()).take(MAX_PROPS).collect();
+            n.layer = n.layer.as_deref().map(clean_prop).filter(|l| !l.is_empty());
+            if let Some(l) = &n.layer
+                && map.layer(l).is_none()
+                && map.layers.len() < MAX_LAYERS
+            {
+                map.layers.push(Layer { name: l.clone(), visible: true, locked: false });
+            }
             max_id = max_id.max(n.id.0);
             map.nodes.insert(n.id, n);
         }
@@ -899,7 +1086,8 @@ impl Map {
             max_id = max_id.max(e.id.0);
             map.edges.insert(e.id, e);
         }
-        map.next_id = max_id.saturating_add(1).max(file_next).max(1);
+        let max_group = map.nodes.values().filter_map(|n| n.group).max().unwrap_or(0);
+        map.next_id = max_id.max(max_group).saturating_add(1).max(file_next).max(1);
         Ok(map)
     }
 }
@@ -1002,6 +1190,43 @@ mod tests {
             let _ = s.inner_strokes(100.0, 60.0);
             assert_eq!(Shape::parse(s.name()), Some(s));
         }
+    }
+
+    #[test]
+    fn layers_and_groups() {
+        let mut m = Map::new("l");
+        let a = m.add_node("a", Point::default(), None).unwrap();
+        let b = m.add_node("b", Point::new(10.0, 0.0), None).unwrap();
+        let c = m.add_node("c", Point::new(20.0, 0.0), None).unwrap();
+        m.set_node_layer(a, Some(" Cabling ")).unwrap();
+        assert_eq!(m.layers().len(), 1);
+        assert_eq!(m.node(a).unwrap().layer.as_deref(), Some("Cabling"));
+        m.set_layer_visible("Cabling", false).unwrap();
+        assert!(!m.is_visible(a) && m.is_visible(b));
+        m.set_layer_locked("Cabling", true).unwrap();
+        assert!(m.is_locked(a) && !m.is_locked(b));
+        m.rename_layer("Cabling", "Wiring").unwrap();
+        assert_eq!(m.node(a).unwrap().layer.as_deref(), Some("Wiring"));
+        assert!(m.rename_layer("Wiring", "").is_err());
+        assert!(m.set_layer_visible("nope", true).is_err());
+        m.add_layer("Wiring").unwrap();
+        assert_eq!(m.layers().len(), 1, "adding an existing layer is a no-op");
+        let g = m.group(&[a, b]).unwrap();
+        assert_eq!(m.group_members(a), vec![a, b]);
+        assert_eq!(m.group_members(c), vec![c]);
+        assert!(m.group(&[a]).is_err());
+        let copy = m.duplicate_node(a, 5.0, 5.0).unwrap();
+        assert_eq!(m.node(copy).unwrap().group, None, "a duplicate leaves the group");
+        let back = Map::from_json(&m.to_json()).unwrap();
+        assert_eq!(back, m);
+        assert!(back.layer("Wiring").is_some_and(|l| l.locked && !l.visible));
+        let fresh = back.clone().add_node("z", Point::default(), None).unwrap();
+        assert!(fresh.0 > g, "ids never collide with group ids");
+        m.ungroup(&[b]).unwrap();
+        assert_eq!(m.group_members(a), vec![a]);
+        m.remove_layer("Wiring").unwrap();
+        assert_eq!(m.node(a).unwrap().layer, None);
+        assert!(m.is_visible(a));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! The left rail and its panels: Templates, Shapes, Elements, Layout and Files.
+//! The left rail and its panels: Templates, Shapes, Elements, Layout, Layers, Check and Files.
 
 use egui::{Color32, FontId, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 use ideacraft_engine::core::route::glyph_box;
@@ -24,6 +24,8 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
                 (SidePanel::Shapes, Icon::Shapes, "Shapes"),
                 (SidePanel::Elements, Icon::Elements, "Elements"),
                 (SidePanel::Layout, Icon::Layout, "Layout"),
+                (SidePanel::Layers, Icon::Layers, "Layers"),
+                (SidePanel::Check, Icon::Check, "Check"),
                 (SidePanel::Files, Icon::Files, "Files"),
             ] {
                 let active = app.sidebar == Some(panel);
@@ -42,6 +44,8 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
                 SidePanel::Shapes => "Shapes",
                 SidePanel::Elements => "Elements",
                 SidePanel::Layout => "Layout",
+                SidePanel::Layers => "Layers",
+                SidePanel::Check => "Check",
                 SidePanel::Files => "Files",
             };
             ui.label(RichText::new(app.tr(title)).heading().strong().color(t.ui_text));
@@ -57,6 +61,8 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
             SidePanel::Shapes => shapes_panel(app, ui, t),
             SidePanel::Elements => elements_panel(app, ui, t),
             SidePanel::Layout => layout_panel(app, ui, t),
+            SidePanel::Layers => layers_panel(app, ui, t),
+            SidePanel::Check => check_panel(app, ui, t),
             SidePanel::Files => files_panel(app, ui, t),
         });
     });
@@ -452,6 +458,217 @@ fn layout_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
     let has_sel = !app.session.selection().is_empty();
     if icon_text_button(ui, t, Icon::Collapse, app.tr("Collapse or expand branch"), has_sel).on_hover_text(app.tip("node.toggleCollapse")).clicked() {
         app.run("node.toggleCollapse", json!({}));
+    }
+}
+
+/// One layer's row: visibility, lock, name (click to select its shapes), count, rename,
+/// move-selection-here and remove.
+struct LayerRow {
+    name: String,
+    visible: bool,
+    locked: bool,
+    nodes: usize,
+}
+
+fn layers_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
+    ui.label(RichText::new(app.tr("Layers hold shapes. Hide a layer to declutter, lock it to keep its shapes out of the way.")).color(t.muted));
+    let map = app.session.map();
+    let rows: Vec<LayerRow> = map
+        .layers()
+        .iter()
+        .map(|l| LayerRow {
+            name: l.name.clone(),
+            visible: l.visible,
+            locked: l.locked,
+            nodes: map.nodes().filter(|n| n.layer.as_deref() == Some(l.name.as_str())).count(),
+        })
+        .collect();
+    let unlayered = map.nodes().filter(|n| n.layer.is_none()).count();
+    let has_sel = !app.session.selection().is_empty();
+    let sel_layers: Vec<Option<String>> = app.session.selection().iter().filter_map(|id| map.node(*id)).map(|n| n.layer.clone()).collect();
+    section(ui, t, app.tr("Layers"));
+    // The default layer: everything without a layer.
+    ui.horizontal(|ui| {
+        ui.add_space(56.0);
+        let on_it = has_sel && sel_layers.iter().all(Option::is_none);
+        let name = RichText::new(app.tr("Default layer")).color(if on_it { t.accent } else { t.ui_text });
+        if ui.add(egui::Label::new(name).sense(Sense::click())).on_hover_text(app.tr("Select its shapes")).clicked() {
+            let ids: Vec<u64> = app.session.map().nodes().filter(|n| n.layer.is_none()).map(|n| n.id.0).collect();
+            app.edge_selection = None;
+            app.run("selection.set", json!({"ids": ids}));
+        }
+        ui.label(RichText::new(unlayered.to_string()).small().color(t.muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icon_button(ui, t, Icon::Elements, app.tr("Move the selection to this layer"), has_sel && !on_it, false).clicked() {
+                app.run("node.setLayer", json!({"layer": null}));
+            }
+        });
+    });
+    for row in rows {
+        ui.horizontal(|ui| {
+            let (eye, eye_tip) = if row.visible { (Icon::Eye, "Hide layer") } else { (Icon::EyeOff, "Show layer") };
+            if icon_button(ui, t, eye, app.tr(eye_tip), true, !row.visible).clicked() {
+                app.run("layer.setVisible", json!({"name": row.name, "visible": !row.visible}));
+            }
+            let (lock, lock_tip) = if row.locked { (Icon::Lock, "Unlock layer") } else { (Icon::Unlock, "Lock layer") };
+            if icon_button(ui, t, lock, app.tr(lock_tip), true, row.locked).clicked() {
+                app.run("layer.setLocked", json!({"name": row.name, "locked": !row.locked}));
+            }
+            let renaming = app.rename_layer.as_ref().is_some_and(|(n, _)| *n == row.name);
+            if renaming {
+                let mut draft = app.rename_layer.as_ref().map(|(_, d)| d.clone()).unwrap_or_default();
+                let te = ui.add(egui::TextEdit::singleline(&mut draft).desired_width(130.0));
+                if te.changed() {
+                    app.rename_layer = Some((row.name.clone(), draft.clone()));
+                }
+                if te.lost_focus() {
+                    app.rename_layer = None;
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !draft.trim().is_empty() && draft.trim() != row.name {
+                        app.run("layer.rename", json!({"name": row.name, "to": draft.trim()}));
+                    }
+                } else {
+                    te.request_focus();
+                }
+            } else {
+                let on_it = has_sel && sel_layers.iter().all(|l| l.as_deref() == Some(row.name.as_str()));
+                let color = if on_it {
+                    t.accent
+                } else if row.visible {
+                    t.ui_text
+                } else {
+                    t.muted
+                };
+                let name = RichText::new(&row.name).color(color);
+                if ui.add(egui::Label::new(name).sense(Sense::click()).truncate()).on_hover_text(app.tr("Select its shapes")).clicked() {
+                    let ids: Vec<u64> = app.session.map().nodes().filter(|n| n.layer.as_deref() == Some(row.name.as_str())).map(|n| n.id.0).collect();
+                    app.edge_selection = None;
+                    app.run("selection.set", json!({"ids": ids}));
+                }
+                ui.label(RichText::new(row.nodes.to_string()).small().color(t.muted));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icon_button(ui, t, Icon::Trash, app.tr("Remove layer (its shapes go to the default layer)"), true, false).clicked() {
+                    app.run("layer.remove", json!({"name": row.name}));
+                }
+                if icon_button(ui, t, Icon::Edit, app.tr("Rename layer"), true, renaming).clicked() {
+                    app.rename_layer = if renaming { None } else { Some((row.name.clone(), row.name.clone())) };
+                }
+                let on_it = sel_layers.iter().all(|l| l.as_deref() == Some(row.name.as_str()));
+                if icon_button(ui, t, Icon::Elements, app.tr("Move the selection to this layer"), has_sel && !on_it, false).clicked() {
+                    app.run("node.setLayer", json!({"layer": row.name}));
+                }
+            });
+        });
+    }
+    section(ui, t, app.tr("New layer"));
+    ui.horizontal(|ui| {
+        let mut name = app.new_layer.clone();
+        let te = ui.add(egui::TextEdit::singleline(&mut name).desired_width(200.0).hint_text(app.tr("Layer name")));
+        if te.changed() {
+            app.new_layer = name.clone();
+        }
+        let submit = te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let add = icon_button(ui, t, Icon::Plus, app.tr("Add layer"), !name.trim().is_empty(), false).clicked();
+        if (submit || add) && !name.trim().is_empty() {
+            let params = if has_sel { json!({"layer": name.trim()}) } else { json!({"ids": [], "layer": name.trim()}) };
+            let ok = if has_sel { app.run("node.setLayer", params).is_some() } else { app.run("layer.add", json!({"name": name.trim()})).is_some() };
+            if ok {
+                app.new_layer.clear();
+            }
+        }
+    });
+    ui.label(RichText::new(app.tr("With shapes selected, the new layer takes them.")).small().color(t.muted));
+    section(ui, t, app.tr("Groups"));
+    let n = app.session.selection().len();
+    let grouped = app.session.selection().iter().any(|id| app.session.map().node(*id).is_some_and(|n| n.group.is_some()));
+    ui.horizontal(|ui| {
+        if icon_text_button(ui, t, Icon::Group, app.tr("Group"), n >= 2).on_hover_text(app.tip("group.create")).clicked() {
+            app.run("group.create", json!({}));
+        }
+        if icon_text_button(ui, t, Icon::Ungroup, app.tr("Ungroup"), grouped).on_hover_text(app.tip("group.ungroup")).clicked() {
+            app.run("group.ungroup", json!({}));
+        }
+    });
+    ui.label(RichText::new(app.tr("Grouped shapes select and move together.")).small().color(t.muted));
+}
+
+fn severity_color(severity: &str) -> Color32 {
+    match severity {
+        "error" => Color32::from_rgb(0xe5, 0x48, 0x4d),
+        "warning" => Color32::from_rgb(0xe3, 0xa0, 0x08),
+        _ => Color32::from_rgb(0x4a, 0x8f, 0xe0),
+    }
+}
+
+fn check_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
+    ui.label(
+        RichText::new(app.tr("Checks the network shapes' properties: IP addresses and masks, gateways, VLANs and the interfaces on links."))
+            .color(t.muted),
+    );
+    ui.add_space(8.0);
+    if primary_button(ui, t, Some(Icon::Check), app.tr("Check network")).on_hover_text(app.tip("net.validate")).clicked() {
+        app.check_network();
+    }
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new(app.tr("Properties read: ip (10.0.1.5/24), mask, gateway, vlan; interfaces like Gi0/1=10.0.1.1/24 vlan 10; link labels like VLAN 10 or Gi0/1 - eth0."))
+            .small()
+            .color(t.muted),
+    );
+    let Some(report) = app.check.clone() else { return };
+    section(ui, t, app.tr("Result"));
+    if report.findings.is_empty() {
+        ui.label(RichText::new(app.tr("No problems found")).color(severity_color("ok")));
+        return;
+    }
+    let summary = app.language.fill(
+        "{errors} errors · {warnings} warnings · {infos} notes",
+        &[("errors", &report.errors.to_string()), ("warnings", &report.warnings.to_string()), ("infos", &report.infos.to_string())],
+    );
+    ui.label(RichText::new(summary).strong().color(t.ui_text));
+    ui.add_space(4.0);
+    for (i, finding) in report.findings.iter().enumerate() {
+        let frame = egui::Frame::NONE.fill(t.card).stroke(Stroke::new(1.0, t.border)).corner_radius(8).inner_margin(8);
+        let inner = frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (dot, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 4.0, severity_color(&finding.severity));
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(&finding.message).color(t.ui_text));
+                    ui.label(RichText::new(app.tr(code_label(&finding.code))).small().color(t.muted));
+                });
+            });
+        });
+        let click = ui.interact(inner.response.rect, ui.id().with(("finding", i)), Sense::click());
+        if click.hovered() {
+            ui.painter().rect_stroke(inner.response.rect, 8.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        }
+        if click.on_hover_text(app.tr("Select the shapes involved")).clicked() {
+            app.show_finding(finding);
+        }
+        ui.add_space(4.0);
+    }
+}
+
+/// A finding code as a short interface label.
+fn code_label(code: &str) -> &'static str {
+    match code {
+        "bad-address" => "Invalid address",
+        "bad-mask" => "Invalid mask",
+        "duplicate-address" => "Duplicate address",
+        "network-address" => "Network address used as a host",
+        "broadcast-address" => "Broadcast address used as a host",
+        "subnet-mismatch" => "Subnet mismatch",
+        "gateway-outside-subnet" => "Gateway outside the subnet",
+        "bad-vlan" => "Invalid VLAN",
+        "vlan-mismatch" => "VLAN mismatch",
+        "unknown-interface" => "Unknown interface",
+        "interface-reused" => "Interface used twice",
+        "duplicate-interface" => "Duplicate interface",
+        "no-address" => "No address",
+        "isolated" => "Isolated device",
+        _ => "Note",
     }
 }
 

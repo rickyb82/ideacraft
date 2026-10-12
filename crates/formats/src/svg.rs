@@ -69,10 +69,18 @@ fn points(pts: &[Point]) -> String {
     pts.iter().map(|p| format!("{},{}", num(p.x), num(p.y))).collect::<Vec<_>>().join(" ")
 }
 
-/// A node's box: its explicit size, else a fit around its text.
+/// A node's box: its explicit size, else a fit around its text (visible nodes only).
 pub fn measure(map: &Map) -> Vec<(NodeId, Aabb)> {
-    map.nodes()
-        .filter(|n| map.is_visible(n.id))
+    measure_nodes(map.nodes().filter(|n| map.is_visible(n.id)))
+}
+
+/// Boxes for every node, hidden ones included (for exports that keep hidden layers).
+pub fn measure_all(map: &Map) -> Vec<(NodeId, Aabb)> {
+    measure_nodes(map.nodes())
+}
+
+fn measure_nodes<'a>(nodes: impl Iterator<Item = &'a ideacraft_core::Node>) -> Vec<(NodeId, Aabb)> {
+    nodes
         .map(|n| {
             let (hw, hh) = n.half_size().unwrap_or_else(|| {
                 let lines = wrap(&n.label, WRAP_CHARS);

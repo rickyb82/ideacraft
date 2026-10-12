@@ -88,6 +88,23 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("node.setProps", "Properties", "Format › Properties", "", "{id? | ids?, props: {name: value}} (empty value removes; merges)", true),
     c("node.setZ", "Bring to Front / Send to Back", "Arrange › Order", "", "{id? | ids?, z: int | \"front\" | \"back\"}", true),
     c("edit.duplicate", "Duplicate", "Edit › Duplicate", "Cmd+D", "{id? | ids?, dx?, dy?} → {ids}", true),
+    c("group.create", "Group", "Arrange › Group", "Cmd+G", "{ids?} (selection by default; at least two) → {group}", true),
+    c("group.ungroup", "Ungroup", "Arrange › Ungroup", "Cmd+Shift+G", "{id? | ids?}", true),
+    c("map.layers", "Layers", "View › Layers", "", "{} → [{name, visible, locked, nodes}]", false),
+    c("layer.add", "Add Layer", "View › Layers › Add", "", "{name}", true),
+    c("layer.remove", "Remove Layer", "View › Layers › Remove", "", "{name} (its shapes go to the default layer)", true),
+    c("layer.rename", "Rename Layer", "View › Layers › Rename", "", "{name, to}", true),
+    c("layer.setVisible", "Show/Hide Layer", "View › Layers › Visible", "", "{name, visible: bool}", true),
+    c("layer.setLocked", "Lock/Unlock Layer", "View › Layers › Locked", "", "{name, locked: bool}", true),
+    c("node.setLayer", "Move to Layer", "Arrange › Move to Layer", "", "{id? | ids?, layer: name | null} (the layer is created when missing)", true),
+    c(
+        "net.validate",
+        "Check Network",
+        "Review › Check Network",
+        "",
+        "{language?: en|it} → {errors, warnings, infos, findings: [{code, severity, message, nodes, edges, detail}]}",
+        false,
+    ),
     c("arrange.align", "Align", "Arrange › Align", "", "{ids?, edge: left|right|top|bottom|centerX|centerY} (selection by default)", true),
     c("arrange.distribute", "Distribute", "Arrange › Distribute", "", "{ids?, axis: x|y}", true),
     c("arrange.snap", "Snap to Grid", "Arrange › Snap to Grid", "", "{ids?, grid?: number (default 20)}", true),
@@ -347,6 +364,76 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
             }
             s.selection = ids.clone();
             Ok(json!({"ids": ids.iter().map(|n| n.0).collect::<Vec<_>>()}))
+        }
+        "group.create" => {
+            let ids = p::targets(prm, &s.selection)?;
+            let g = s.map.group(&ids)?;
+            Ok(json!({"group": g}))
+        }
+        "group.ungroup" => {
+            let ids = p::targets(prm, &s.selection)?;
+            s.map.ungroup(&ids)?;
+            Ok(json!({}))
+        }
+        "map.layers" => Ok(Value::Array(
+            s.map
+                .layers()
+                .iter()
+                .map(|l| json!({"name": l.name, "visible": l.visible, "locked": l.locked, "nodes": s.map.nodes().filter(|n| n.layer.as_deref() == Some(l.name.as_str())).count()}))
+                .collect(),
+        )),
+        "layer.add" => {
+            s.map.add_layer(p::str(prm, "name")?)?;
+            Ok(json!({}))
+        }
+        "layer.remove" => {
+            s.map.remove_layer(p::str(prm, "name")?)?;
+            Ok(json!({}))
+        }
+        "layer.rename" => {
+            s.map.rename_layer(p::str(prm, "name")?, p::str(prm, "to")?)?;
+            Ok(json!({}))
+        }
+        "layer.setVisible" => {
+            let visible = prm.get("visible").and_then(Value::as_bool).ok_or_else(|| Error::Param("`visible` must be true or false".into()))?;
+            s.map.set_layer_visible(p::str(prm, "name")?, visible)?;
+            let map = &s.map;
+            s.selection.retain(|n| map.is_visible(*n));
+            Ok(json!({}))
+        }
+        "layer.setLocked" => {
+            let locked = prm.get("locked").and_then(Value::as_bool).ok_or_else(|| Error::Param("`locked` must be true or false".into()))?;
+            s.map.set_layer_locked(p::str(prm, "name")?, locked)?;
+            Ok(json!({}))
+        }
+        "node.setLayer" => {
+            let layer = match prm.get("layer") {
+                None => return Err(Error::Param("`layer` must be a name or null".into())),
+                Some(Value::Null) => None,
+                Some(_) => Some(p::str(prm, "layer")?),
+            };
+            for t in p::targets(prm, &s.selection)? {
+                s.map.set_node_layer(t, layer)?;
+            }
+            Ok(json!({}))
+        }
+        "net.validate" => {
+            let italian = language(prm)? == Lang::It;
+            let findings = ideacraft_core::netcheck::validate(&s.map);
+            let count = |sev| findings.iter().filter(|f| f.severity == sev).count();
+            Ok(json!({
+                "errors": count(ideacraft_core::netcheck::Severity::Error),
+                "warnings": count(ideacraft_core::netcheck::Severity::Warning),
+                "infos": count(ideacraft_core::netcheck::Severity::Info),
+                "findings": findings.iter().map(|f| json!({
+                    "code": f.code.name(),
+                    "severity": match f.severity { ideacraft_core::netcheck::Severity::Error => "error", ideacraft_core::netcheck::Severity::Warning => "warning", ideacraft_core::netcheck::Severity::Info => "info" },
+                    "message": f.message(italian),
+                    "nodes": f.nodes.iter().map(|n| n.0).collect::<Vec<_>>(),
+                    "edges": f.edges.iter().map(|e| e.0).collect::<Vec<_>>(),
+                    "detail": f.detail,
+                })).collect::<Vec<_>>(),
+            }))
         }
         "arrange.align" => {
             let ids = p::targets(prm, &s.selection)?;

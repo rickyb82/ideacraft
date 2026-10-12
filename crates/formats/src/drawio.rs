@@ -163,6 +163,20 @@ pub fn import(text: &str) -> Result<Map> {
     map.set_mode(Mode::Diagram);
     let mut ids: HashMap<String, NodeId> = HashMap::new();
     let cells: Vec<&Element> = root.children_named("mxCell").collect();
+    // Layers: cells under the root cell "0" that are neither vertices nor edges.
+    let mut layer_names: HashMap<String, String> = HashMap::new();
+    for cell in cells.iter().filter(|c| c.attr("parent") == Some("0") && c.attr("vertex") != Some("1") && c.attr("edge") != Some("1")) {
+        let (Some(id), Some(name)) = (cell.attr("id"), cell.attr("value").map(unescape_html).filter(|v| !v.is_empty())) else { continue };
+        if map.add_layer(&name).is_ok() {
+            if cell.attr("visible") == Some("0") {
+                let _ = map.set_layer_visible(&name, false);
+            }
+            if style_map(cell.attr("style").unwrap_or_default()).get("locked").is_some_and(|v| v == "1") {
+                let _ = map.set_layer_locked(&name, true);
+            }
+            layer_names.insert(id.to_string(), name);
+        }
+    }
     // Vertices first (edges refer to them).
     for cell in cells.iter().filter(|c| c.attr("vertex") == Some("1")) {
         let Some(id) = cell.attr("id") else { continue };
@@ -186,6 +200,9 @@ pub fn import(text: &str) -> Result<Map> {
         // Our own stencils round-trip through a custom style key.
         if let Some(k) = style.get("ideacraftKind").filter(|k| stencil::find(k).is_some()) {
             let _ = map.set_kind(node, Some(k));
+        }
+        if let Some(layer) = cell.attr("parent").and_then(|p| layer_names.get(p)) {
+            let _ = map.set_node_layer(node, Some(layer));
         }
         ids.insert(id.to_string(), node);
     }
@@ -252,24 +269,36 @@ fn style_of(n: &ideacraft_core::Node) -> String {
 /// The map as an uncompressed draw.io file. Stencil icons are not draw.io shapes, so they travel
 /// as labelled rounded boxes (with their kind kept for a round trip into IdeaCraft).
 pub fn export(map: &Map) -> String {
-    let measured: HashMap<NodeId, ideacraft_core::route::Aabb> = crate::svg::measure(map).into_iter().collect();
+    let measured: HashMap<NodeId, ideacraft_core::route::Aabb> = crate::svg::measure_all(map).into_iter().collect();
     let mut out = String::new();
     out.push_str(&format!(
         "<mxfile host=\"IdeaCraft\" version=\"{}\" type=\"device\">\n<diagram id=\"d1\" name=\"{}\">\n<mxGraphModel grid=\"1\" gridSize=\"20\" page=\"1\"><root>\n<mxCell id=\"0\"/>\n<mxCell id=\"1\" parent=\"0\"/>\n",
         env!("CARGO_PKG_VERSION"),
         escape(map.title())
     ));
+    for (i, l) in map.layers().iter().enumerate() {
+        let visible = if l.visible { "" } else { " visible=\"0\"" };
+        let locked = if l.locked { " style=\"locked=1;\"" } else { "" };
+        out.push_str(&format!("<mxCell id=\"L{i}\" value=\"{}\" parent=\"0\"{visible}{locked}/>\n", escape(&l.name)));
+    }
+    let parent_of = |n: &ideacraft_core::Node| match n.layer.as_deref().and_then(|l| map.layers().iter().position(|x| x.name == l)) {
+        Some(i) => format!("L{i}"),
+        None => "1".to_string(),
+    };
+    // Hidden layers are exported too (draw.io keeps them hidden), so walk every node.
     for n in map.nodes_in_draw_order() {
-        if !map.is_visible(n.id) {
+        let hidden_by_fold = !map.is_visible(n.id) && n.layer.as_deref().and_then(|l| map.layer(l)).is_none_or(|l| l.visible);
+        if hidden_by_fold {
             continue;
         }
         let Some(b) = measured.get(&n.id) else { continue };
         let value = escape(&n.label).replace('\n', "&lt;br&gt;");
         out.push_str(&format!(
-            "<mxCell id=\"n{}\" value=\"{}\" style=\"{}\" vertex=\"1\" parent=\"1\"><mxGeometry x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" as=\"geometry\"/></mxCell>\n",
+            "<mxCell id=\"n{}\" value=\"{}\" style=\"{}\" vertex=\"1\" parent=\"{}\"><mxGeometry x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" as=\"geometry\"/></mxCell>\n",
             n.id.0,
             value,
             escape(&style_of(n)),
+            parent_of(n),
             b.cx - b.hw,
             b.cy - b.hh,
             b.hw * 2.0,
@@ -397,11 +426,16 @@ mod tests {
         assert_eq!(back.edge_count(), m.edge_count());
         let e = back.edges().find(|e| e.label == "1 Gbit").unwrap();
         assert_eq!((e.style.route, e.style.line, e.style.arrows), (Route::Orthogonal, LineStyle::Dashed, Arrows::Both));
-        // A stencil kind survives the round trip.
+        // A stencil kind and layers survive the round trip.
         let mut m = Map::new("k");
-        m.add_stencil(stencil::find("net.firewall").unwrap(), None, Point::new(0.0, 0.0)).unwrap();
+        let fw = m.add_stencil(stencil::find("net.firewall").unwrap(), None, Point::new(0.0, 0.0)).unwrap();
+        m.set_node_layer(fw, Some("Security")).unwrap();
+        m.set_layer_locked("Security", true).unwrap();
         let back = import(&export(&m)).unwrap();
-        assert_eq!(back.nodes().next().unwrap().kind.as_deref(), Some("net.firewall"));
+        let n = back.nodes().next().unwrap();
+        assert_eq!(n.kind.as_deref(), Some("net.firewall"));
+        assert_eq!(n.layer.as_deref(), Some("Security"));
+        assert!(back.layer("Security").is_some_and(|l| l.locked));
         assert!(import("<mxfile><diagram id='1'>%%%garbage</diagram></mxfile>").is_err());
         assert!(import("<svg/>").is_err());
     }

@@ -165,6 +165,63 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Map / Diagram Mode" => "Modalità mappa / diagramma",
         "Add Shape" => "Aggiungi forma",
         "draw.io / diagrams.net" => "draw.io / diagrams.net",
+        "Layers" => "Livelli",
+        "Check" => "Verifica",
+        "Layers hold shapes. Hide a layer to declutter, lock it to keep its shapes out of the way." => {
+            "I livelli contengono le forme. Nascondi un livello per fare ordine, bloccalo per non toccare le sue forme."
+        }
+        "Default layer" => "Livello predefinito",
+        "Select its shapes" => "Seleziona le sue forme",
+        "Move the selection to this layer" => "Sposta la selezione in questo livello",
+        "Hide layer" => "Nascondi livello",
+        "Show layer" => "Mostra livello",
+        "Unlock layer" => "Sblocca livello",
+        "Lock layer" => "Blocca livello",
+        "Remove layer (its shapes go to the default layer)" => "Rimuovi livello (le sue forme passano al livello predefinito)",
+        "Rename layer" => "Rinomina livello",
+        "New layer" => "Nuovo livello",
+        "Layer name" => "Nome del livello",
+        "Add layer" => "Aggiungi livello",
+        "With shapes selected, the new layer takes them." => "Con delle forme selezionate, il nuovo livello le prende.",
+        "Groups" => "Gruppi",
+        "Grouped shapes select and move together." => "Le forme raggruppate si selezionano e si spostano insieme.",
+        "Checks the network shapes' properties: IP addresses and masks, gateways, VLANs and the interfaces on links." => {
+            "Controlla le proprietà delle forme di rete: indirizzi IP e maschere, gateway, VLAN e le interfacce sui collegamenti."
+        }
+        "Check network" => "Verifica rete",
+        "Properties read: ip (10.0.1.5/24), mask, gateway, vlan; interfaces like Gi0/1=10.0.1.1/24 vlan 10; link labels like VLAN 10 or Gi0/1 - eth0." => {
+            "Proprietà lette: ip (10.0.1.5/24), mask, gateway, vlan; interfacce come Gi0/1=10.0.1.1/24 vlan 10; etichette dei collegamenti come VLAN 10 o Gi0/1 - eth0."
+        }
+        "Result" => "Risultato",
+        "No problems found" => "Nessun problema trovato",
+        "{errors} errors · {warnings} warnings · {infos} notes" => "{errors} errori · {warnings} avvisi · {infos} note",
+        "Network check: no problems found" => "Verifica rete: nessun problema trovato",
+        "Network check: {errors} errors, {warnings} warnings, {infos} notes" => "Verifica rete: {errors} errori, {warnings} avvisi, {infos} note",
+        "Select the shapes involved" => "Seleziona le forme coinvolte",
+        "Invalid address" => "Indirizzo non valido",
+        "Invalid mask" => "Maschera non valida",
+        "Duplicate address" => "Indirizzo duplicato",
+        "Network address used as a host" => "Indirizzo di rete usato come host",
+        "Broadcast address used as a host" => "Indirizzo di broadcast usato come host",
+        "Subnet mismatch" => "Sottorete diversa",
+        "Gateway outside the subnet" => "Gateway fuori dalla sottorete",
+        "Invalid VLAN" => "VLAN non valida",
+        "VLAN mismatch" => "VLAN diversa",
+        "Unknown interface" => "Interfaccia sconosciuta",
+        "Interface used twice" => "Interfaccia usata due volte",
+        "Duplicate interface" => "Interfaccia duplicata",
+        "No address" => "Nessun indirizzo",
+        "Isolated device" => "Dispositivo isolato",
+        "Note" => "Nota",
+        "Group" => "Raggruppa",
+        "Ungroup" => "Separa",
+        "Check Network" => "Verifica rete",
+        "Add Layer" => "Aggiungi livello",
+        "Remove Layer" => "Rimuovi livello",
+        "Rename Layer" => "Rinomina livello",
+        "Show/Hide Layer" => "Mostra/nascondi livello",
+        "Lock/Unlock Layer" => "Blocca/sblocca livello",
+        "Move to Layer" => "Sposta nel livello",
         _ => return None,
     })
 }

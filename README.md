@@ -20,13 +20,23 @@ conventions: everything is a command, nothing crashes, and every file stays read
   used on first run.
 - **Desktop and web** — the same Rust code runs natively and in the browser (WebAssembly).
 - **Diagram mode (Visio-style)** — switch any map to a free diagram: a shape library of
-  45 original stencils (basic shapes, flowchart symbols, network devices, cloud & servers, people
-  & places), resizable shapes with snap-to-grid, containers/zones, marquee selection, align and
-  distribute, duplicate, front/back ordering, and styled connectors (straight, orthogonal or
-  curved; solid, dashed or dotted; arrows at either end; colour and width).
+  74 original stencils in seven sets (basic shapes, flowchart, network devices, cloud & servers,
+  people & places, UML, BPMN), resizable shapes with snap-to-grid, containers/zones, marquee
+  selection, align and distribute, duplicate, front/back ordering, and styled connectors
+  (straight, orthogonal or curved; solid, dashed or dotted; arrows at either end; colour and width).
+- **Layers and groups** — put shapes on named layers, hide or lock a layer (locked shapes stay
+  out of the way on the canvas), move the selection between layers; group shapes (Cmd+G) so they
+  select and move together, ungroup with Cmd+Shift+G. Layers round-trip through draw.io files.
 - **Interactive network diagrams** — every shape carries free properties (IP, VLAN, model,
   owner…) shown in a tooltip and editable in the Elements panel; a `status` of up / warning /
   down lights a green, amber or red indicator on the shape.
+- **Network check** — the Check panel (and `ideacraft-cli check`, the `validate_network` MCP
+  tool) validates what the diagram declares: IP addresses and masks (`ip 10.0.1.5/24`,
+  `mask 255.255.255.0`), duplicate, network and broadcast addresses, gateways outside the subnet,
+  VLAN ids and VLAN consistency between shapes and link labels (`VLAN 10`), interfaces declared on
+  devices (`interfaces: Gi0/1=10.0.1.1/24 vlan 10; Gi0/24 trunk 10,20`) and used on links
+  (`Gi0/1 - eth0`), hosts on one switch and VLAN in different subnets, devices without an
+  address or without links. Each finding selects the shapes involved when clicked.
 - **draw.io interchange** — open `.drawio` files (plain or compressed) and export to draw.io, so
   diagrams travel to and from diagrams.net, Visio and the tools that read it.
 
@@ -99,7 +109,11 @@ cargo install --path apps/ideacraft-cli
 claude mcp add ideacraft -- ideacraft-cli mcp
 ```
 
-Tools, examples and the Claude Desktop configuration are in [docs/mcp.md](docs/mcp.md).
+Tools, examples and the Claude Desktop configuration are in [docs/mcp.md](docs/mcp.md). The
+server also offers **prompts**: `create_map` turns a plain-language brief ("a project plan for a
+school garden", "the network of a branch office with two VLANs") into a complete map or diagram,
+`design_network` draws an addressed network and checks it, and `check_network` reviews the open
+diagram's addresses, VLANs and interfaces. The `build_map` tool creates a whole map in one call.
 
 ### Headless
 
@@ -109,12 +123,13 @@ cargo run -p ideacraft-cli -- commands
 cargo run -p ideacraft-cli -- convert plan.xmind plan.ideacraft.json
 cargo run -p ideacraft-cli -- run --template brainstorm \
     --cmd 'node.addChild={"id":1,"label":"Ask a teacher"}' --cmd 'layout.radial' --out ideas.md
+cargo run -p ideacraft-cli -- check office.drawio --lang it   # network findings; exit 1 on errors
 ```
 
 ### Look at the UI without a window
 
 ```sh
-cargo run -p ideacraft-ui-egui --example snapshot -- --template swot out.png [--dark] [--lang it] [--panel elements] [--select 2]
+cargo run -p ideacraft-ui-egui --example snapshot -- --template swot out.png [--dark] [--lang it] [--panel elements|shapes|layout|layers|check|files] [--select 2]
 ```
 
 ## Develop

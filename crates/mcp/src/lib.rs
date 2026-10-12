@@ -3,6 +3,7 @@
 //!
 //! Every edit goes through the engine's commands ([`Session::execute`]), so it is validated, can
 //! be undone (`run_command` with `edit.undo`) and never leaves a half-applied map.
+#![recursion_limit = "512"]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::io::{BufRead, Write};
@@ -23,7 +24,8 @@ pub const MAP_JSON_URI: &str = "ideacraft://map.json";
 /// Longest request line read (bytes); longer lines are answered with an error.
 const MAX_LINE: usize = 32 * 1024 * 1024;
 
-const INSTRUCTIONS: &str = "IdeaCraft edits one map at a time: a mind/concept map (ideas in a tree plus labelled links) or, in diagram mode, a free diagram \
+const INSTRUCTIONS: &str = "Prompts: create_map (a map from a description), design_network (a checked network diagram), check_network. \
+build_map creates a whole map in one call; validate_network checks ip/vlan/interfaces. IdeaCraft edits one map at a time: a mind/concept map (ideas in a tree plus labelled links) or, in diagram mode, a free diagram \
 (network diagrams, flowcharts, architectures) made of stencil shapes (list_stencils: routers, switches, servers, clouds, flowchart symbols…) with sizes, \
 properties (ip, vlan, status…) and styled connectors (style_link: orthogonal/dashed/arrows). Use add_shape for diagrams, add_idea/add_ideas for maps, \
 align to tidy shapes, export drawio to hand the result to draw.io/Visio and svg to look at it. IdeaCraft edits one concept map at a time. Start with new_map (optionally from a template) or open_map, then add ideas \
@@ -103,6 +105,20 @@ fn tools() -> Value {
         {"name": "align", "description": "Tidy shapes: align several ids on an edge (left|right|top|bottom|centerX|centerY), distribute them along x or y, or snap them to the grid.",
          "inputSchema": {"type": "object", "properties": {"ids": {"type": "array", "items": id}, "edge": {"type": "string", "enum": ["left", "right", "top", "bottom", "centerX", "centerY"]},
              "distribute": {"type": "string", "enum": ["x", "y"]}, "snap": {"type": "boolean"}}, "required": ["ids"]}},
+        {"name": "build_map", "description": "Build a whole map in one call from a nested spec: {title?, mode?: map|diagram, layout?: tree|radial, nodes: [{label, kind?, color?, shape?, x?, y?, props?, children?: [...]}], links?: [{from, to, label?, route?, line?, arrows?}]}. `from`/`to` are node labels (or 'path' labels like 'Root/Branch') or ids returned later. Replaces the open map unless append=true. Returns the outline with ids.",
+         "inputSchema": {"type": "object", "properties": {
+             "title": {"type": "string"}, "mode": {"type": "string", "enum": ["map", "diagram"]}, "layout": {"type": "string", "enum": ["tree", "radial", "none"]}, "append": {"type": "boolean"},
+             "nodes": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}, "kind": {"type": "string"}, "color": color, "shape": shape, "x": {"type": "number"}, "y": {"type": "number"},
+                 "props": {"type": "object", "additionalProperties": {"type": "string"}}, "children": {"type": "array", "items": {"type": "object"}}}, "required": ["label"]}, "maxItems": 2000},
+             "links": {"type": "array", "items": {"type": "object", "properties": {"from": {"type": ["string", "integer"]}, "to": {"type": ["string", "integer"]}, "label": {"type": "string"},
+                 "route": {"type": "string", "enum": ["straight", "orthogonal", "curved"]}, "line": {"type": "string", "enum": ["solid", "dashed", "dotted"]}, "arrows": {"type": "string", "enum": ["none", "end", "start", "both"]}}, "required": ["from", "to"]}, "maxItems": 4000}},
+             "required": ["nodes"]}},
+        {"name": "validate_network", "description": "Check the diagram's network properties: IP syntax, duplicate addresses, network/broadcast addresses, hosts on one VLAN in different subnets, gateways outside their subnet, VLAN ids, interfaces named on links that the device does not declare, interfaces used twice, devices without an address, isolated devices. Returns findings with codes, messages and the ids involved.",
+         "inputSchema": {"type": "object", "properties": {"language": language}}},
+        {"name": "set_layer", "description": "Move shapes to a layer (created when missing; null for the default layer), and optionally show/hide or lock it. Hidden layers are not drawn; locked ones cannot be edited from the canvas.",
+         "inputSchema": {"type": "object", "properties": {"ids": {"type": "array", "items": id}, "layer": {"type": ["string", "null"]}, "visible": {"type": "boolean"}, "locked": {"type": "boolean"}}, "required": ["layer"]}},
+        {"name": "group", "description": "Group shapes so they select and move together (ungroup=true dissolves their groups).",
+         "inputSchema": {"type": "object", "properties": {"ids": {"type": "array", "items": id, "minItems": 1}, "ungroup": {"type": "boolean"}}, "required": ["ids"]}},
         {"name": "set_mode", "description": "Switch the map between mind-map mode (tree layouts, concept links) and diagram mode (free shapes, snapping, styled connectors).",
          "inputSchema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["map", "diagram"]}}, "required": ["mode"]}},
         {"name": "list_commands", "description": "Every engine command with its parameters, for run_command.",
@@ -110,6 +126,91 @@ fn tools() -> Value {
         {"name": "run_command", "description": "Run any engine command by id (see list_commands), e.g. edit.undo, node.moveBy, selection.set.",
          "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}}, "required": ["command"]}}
     ])
+}
+
+/// Prompts: ready-made instructions that turn a request in natural language into tool calls.
+fn prompts() -> Value {
+    json!([
+        {"name": "create_map", "title": "Create a map from a description",
+         "description": "Describe a project, a topic or a process in plain language; the assistant builds the mind map, concept map or diagram with IdeaCraft's tools.",
+         "arguments": [
+            {"name": "description", "description": "What the map is about, in any language (e.g. 'piano di lancio di un prodotto', 'how the water cycle works')", "required": true},
+            {"name": "kind", "description": "mindmap (default), concept-map, flowchart, network, architecture, org-chart", "required": false},
+            {"name": "language", "description": "Language of the map's text: en or it (default: the language of the description)", "required": false},
+            {"name": "save_as", "description": "A file path to save to (.ideacraft.json, .md, .mm, .opml, .drawio, .svg)", "required": false}]},
+        {"name": "design_network", "title": "Design a network diagram",
+         "description": "Describe a site, its devices, VLANs and addressing; the assistant draws the network with stencils, properties (ip, vlan, interfaces, status), labelled connectors and containers, then checks it.",
+         "arguments": [
+            {"name": "description", "description": "The site and what it needs (e.g. 'sede con 20 PC, 2 server, Wi-Fi ospiti, VLAN separate, firewall verso Internet')", "required": true},
+            {"name": "addressing", "description": "Address plan or constraints (e.g. '192.168.10.0/24 server, 192.168.20.0/24 client, VLAN 10/20/30')", "required": false},
+            {"name": "language", "description": "en or it", "required": false},
+            {"name": "save_as", "description": "A file path to save to", "required": false}]},
+        {"name": "check_network", "title": "Check the open network diagram",
+         "description": "Validate IP addresses, subnets, VLANs, gateways and interfaces of the open diagram and explain the findings with fixes.",
+         "arguments": [{"name": "language", "description": "en or it", "required": false}]}
+    ])
+}
+
+fn prompt_text(name: &str, args: &Value) -> Option<(&'static str, String)> {
+    let arg =
+        |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(|v| v.chars().take(4000).collect::<String>());
+    let lang = arg("language").unwrap_or_else(|| "the language of the description".into());
+    let save = arg("save_as")
+        .map(|p| format!("\n8. Save it with save_map to {p} (export too when the extension is not .ideacraft.json)."))
+        .unwrap_or_else(|| "\n8. Do not save unless asked; report the outline.".into());
+    match name {
+        "create_map" => {
+            let description = arg("description")?;
+            let kind = arg("kind").unwrap_or_else(|| "mindmap".into());
+            Some((
+                "Build a map from a description",
+                format!(
+                    "Build an IdeaCraft map for this request (kind: {kind}; write every label in {lang}):\n\n{description}\n\n\
+Work like this:\n\
+1. Call list_templates; if a template fits, start from it with new_map {{template}} and edit, otherwise new_map with a short title.\n\
+2. For a mind map or concept map: one root idea, 4–8 main branches, 2–5 sub-ideas each, short labels (2–6 words). Add the whole tree with build_map in one call. \
+Add labelled links (link_ideas) for relations that cross branches (concept maps: a linking phrase such as 'causes', 'is part of').\n\
+3. For a flowchart, architecture, network or org chart: set_mode diagram, then add_shape per element with the right stencil (list_stencils), real positions on a 20-px grid \
+(left to right or top to bottom, about 200 px apart), link_ideas + style_link for connectors (orthogonal for flowcharts and networks, arrows where the flow has a direction, labels on decisions: Yes/No), \
+basic.container for zones.\n\
+4. Run layout (tree or radial) for maps; for diagrams use align to tidy rows and columns.\n\
+5. Read it back with get_map and fix anything unclear or duplicated.\n\
+6. If it is a network, run validate_network and fix every error.\n\
+7. Finish with a short summary of the structure (3–6 lines) in {lang}.{save}"
+                ),
+            ))
+        }
+        "design_network" => {
+            let description = arg("description")?;
+            let addressing = arg("addressing").unwrap_or_else(|| {
+                "choose a sensible private addressing plan (RFC 1918) with one subnet per VLAN and state it in the summary".into()
+            });
+            Some((
+                "Design a network diagram",
+                format!(
+                    "Draw a network diagram in IdeaCraft for this site (labels in {lang}):\n\n{description}\n\nAddressing: {addressing}\n\n\
+Work like this:\n\
+1. new_map with the site's name, then set_mode diagram.\n\
+2. One add_shape per device with the matching stencil (net.internet, net.firewall, net.router, net.switch, net.wifi, net.server, net.pc, net.laptop, net.phone, net.printer, net.storage, net.vpn, cloud.*). \
+Give every device props: ip (with /prefix, e.g. 192.168.10.5/24), gateway, vlan; switches and routers an interfaces list such as \
+'Gi0/1=192.168.10.1/24 vlan 10; Gi0/24 trunk 10,20'. Use status up/warning/down when known. Group devices of one room or zone in a basic.container.\n\
+3. Lay devices on a 20-px grid: internet/firewall at the top, core switch below, server zone on one side, access switches and clients below (about 160 px apart).\n\
+4. link_ideas between connected devices and style_link route orthogonal, arrows none; label each link with the VLAN and the interfaces at its ends, e.g. 'Gi0/2 ↔ eth0 VLAN 10'.\n\
+5. Run validate_network; fix every error and warning (duplicate addresses, hosts on one VLAN in different subnets, gateways outside the subnet, unknown interfaces), then run it again.\n\
+6. Read get_map and check the picture is tidy (align where needed).\n\
+7. Summarise in {lang}: the addressing plan per VLAN, the devices per zone, and anything the request left open.{save}"
+                ),
+            ))
+        }
+        "check_network" => Some((
+            "Check the open network diagram",
+            format!(
+                "Run validate_network on the open diagram (language {lang}). For each finding explain in one line what is wrong and the fix \
+(the correct address, VLAN or interface). Apply fixes that are unambiguous with update_idea (props) or style_link (labels), then run validate_network again and report what remains."
+            ),
+        )),
+        _ => None,
+    }
 }
 
 fn str_arg<'a>(args: &'a Value, name: &str) -> Option<&'a str> {
@@ -305,6 +406,112 @@ impl Server {
                 Ok(json!({"outline": outline(self.map())}))
             }
             "set_mode" => self.exec("map.setMode", json!({"mode": str_arg(args, "mode").unwrap_or_default()})),
+            "validate_network" => self.exec("net.validate", json!({"language": str_arg(args, "language").unwrap_or("en")})),
+            "set_layer" => {
+                let layer = args.get("layer").cloned().unwrap_or(Value::Null);
+                if let Some(ids) = args.get("ids").filter(|v| v.as_array().is_some_and(|a| !a.is_empty())) {
+                    self.exec("node.setLayer", json!({"ids": ids, "layer": layer}))?;
+                } else if let Some(name) = layer.as_str() {
+                    self.exec("layer.add", json!({"name": name}))?;
+                }
+                if let (Some(name), Some(v)) = (layer.as_str(), args.get("visible").and_then(Value::as_bool)) {
+                    self.exec("layer.setVisible", json!({"name": name, "visible": v}))?;
+                }
+                if let (Some(name), Some(l)) = (layer.as_str(), args.get("locked").and_then(Value::as_bool)) {
+                    self.exec("layer.setLocked", json!({"name": name, "locked": l}))?;
+                }
+                self.exec("map.layers", json!({}))
+            }
+            "group" => {
+                let ids = args.get("ids").cloned().ok_or("`ids` is required")?;
+                if args.get("ungroup").and_then(Value::as_bool) == Some(true) {
+                    self.exec("group.ungroup", json!({"ids": ids}))
+                } else {
+                    self.exec("group.create", json!({"ids": ids}))
+                }
+            }
+            "build_map" => {
+                // Some clients wrap the whole spec in `spec`.
+                let args = args.get("spec").filter(|s| s.is_object()).unwrap_or(args);
+                let nodes = args.get("nodes").and_then(Value::as_array).ok_or("`nodes` must be a list")?;
+                if args.get("append").and_then(Value::as_bool) != Some(true) {
+                    self.exec("map.new", json!({"title": str_arg(args, "title").unwrap_or("Untitled map")}))?;
+                    self.file = None;
+                } else if let Some(t) = str_arg(args, "title") {
+                    self.exec("map.setTitle", json!({"title": t}))?;
+                }
+                if let Some(m) = str_arg(args, "mode") {
+                    self.exec("map.setMode", json!({"mode": m}))?;
+                }
+                let mut by_label: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+                let mut stack: Vec<(Value, Option<u64>, String, usize)> = nodes.iter().rev().map(|n| (n.clone(), None, String::new(), 0)).collect();
+                let mut count = 0usize;
+                while let Some((spec, parent, path, depth)) = stack.pop() {
+                    count += 1;
+                    if count > 2000 || depth > 64 {
+                        break;
+                    }
+                    let label = spec.get("label").and_then(Value::as_str).unwrap_or("Idea");
+                    let mut params = json!({"label": label});
+                    if let Some(p) = parent {
+                        params["parent"] = json!(p);
+                    }
+                    for key in ["x", "y", "kind"] {
+                        if let Some(v) = spec.get(key).filter(|v| !v.is_null()) {
+                            params[key] = v.clone();
+                        }
+                    }
+                    let id = self.exec("node.add", params)?["id"].as_u64().ok_or("no id returned")?;
+                    self.style(id, &spec)?;
+                    if let Some(props) = spec.get("props").filter(|p| p.is_object()) {
+                        self.exec("node.setProps", json!({"id": id, "props": props}))?;
+                    }
+                    let full = if path.is_empty() { label.to_string() } else { format!("{path}/{label}") };
+                    by_label.entry(label.to_string()).or_insert(id);
+                    by_label.insert(full.clone(), id);
+                    if let Some(kids) = spec.get("children").and_then(Value::as_array) {
+                        for k in kids.iter().rev() {
+                            stack.push((k.clone(), Some(id), full.clone(), depth + 1));
+                        }
+                    }
+                }
+                let mut missing = Vec::new();
+                for l in args.get("links").and_then(Value::as_array).into_iter().flatten().take(4000) {
+                    let find = |v: Option<&Value>| -> Option<u64> {
+                        match v? {
+                            Value::Number(n) => n.as_u64(),
+                            Value::String(s) => by_label.get(s.trim()).copied(),
+                            _ => None,
+                        }
+                    };
+                    let (Some(a), Some(b)) = (find(l.get("from")), find(l.get("to"))) else {
+                        missing.push(l.clone());
+                        continue;
+                    };
+                    let e = self.exec("edge.add", json!({"from": a, "to": b, "label": l.get("label").and_then(Value::as_str).unwrap_or("")}))?["id"]
+                        .clone();
+                    let mut style = json!({"id": e});
+                    for key in ["route", "line", "arrows", "color", "width"] {
+                        if let Some(v) = l.get(key) {
+                            style[key] = v.clone();
+                        }
+                    }
+                    if style.as_object().is_some_and(|o| o.len() > 1) {
+                        self.exec("edge.setStyle", style)?;
+                    }
+                }
+                match str_arg(args, "layout") {
+                    Some("none") => {}
+                    Some("radial") => {
+                        self.exec("layout.radial", json!({}))?;
+                    }
+                    _ if self.map().mode() == ideacraft_engine::core::Mode::Map => {
+                        self.exec("layout.tree", json!({}))?;
+                    }
+                    _ => {}
+                }
+                Ok(json!({"outline": outline(self.map()), "unresolved_links": missing}))
+            }
             "add_idea" => {
                 let label = str_arg(args, "label").ok_or("`label` is required")?;
                 let mut params = json!({"label": label});
@@ -407,7 +614,7 @@ impl Server {
         let result = match method {
             "initialize" => Ok(json!({
                 "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).filter(|v| SUPPORTED_VERSIONS.contains(v)).unwrap_or(PROTOCOL_VERSION),
-                "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}},
+                "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}, "prompts": {"listChanged": false}},
                 "serverInfo": {"name": "ideacraft", "title": "IdeaCraft", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": INSTRUCTIONS,
             })),
@@ -430,6 +637,17 @@ impl Server {
                     Err(e) => json!({"content": [{"type": "text", "text": e}], "isError": true}),
                 })
             }
+            "prompts/list" => Ok(json!({"prompts": prompts()})),
+            "prompts/get" => {
+                let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
+                let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                match prompt_text(name, &args) {
+                    Some((description, text)) => {
+                        Ok(json!({"description": description, "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}))
+                    }
+                    None => Err((-32602, format!("unknown prompt {:?}", name.chars().take(40).collect::<String>()))),
+                }
+            }
             "resources/list" => Ok(json!({"resources": [
                 {"uri": MAP_URI, "name": "map", "title": "Open map (outline)", "description": "Title, ideas with their [id] and links", "mimeType": "text/markdown"},
                 {"uri": MAP_JSON_URI, "name": "map.json", "title": "Open map (IdeaCraft JSON)", "description": "The full map: positions, colours, shapes, links", "mimeType": "application/json"},
@@ -440,7 +658,6 @@ impl Server {
                 Some(MAP_JSON_URI) => Ok(json!({"contents": [{"uri": MAP_JSON_URI, "mimeType": "application/json", "text": self.map().to_json()}]})),
                 _ => Err((-32002, "resource not found".to_string())),
             },
-            "prompts/list" => Ok(json!({"prompts": []})),
             _ => Err((-32601, format!("method not found: {}", method.chars().take(64).collect::<String>()))),
         };
         Some(match result {
@@ -495,7 +712,7 @@ mod tests {
         assert!(s.handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none(), "notifications get no reply");
         let list = s.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).unwrap();
         let tools = list["result"]["tools"].as_array().unwrap();
-        assert!(tools.len() >= 20);
+        assert!(tools.len() >= 24);
         for t in tools {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
             assert!(t["description"].as_str().is_some_and(|d| !d.is_empty()));
@@ -597,6 +814,63 @@ mod tests {
                 s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "add_shape", "arguments": args}})).unwrap();
             assert_eq!(r["result"]["isError"], true);
         }
+    }
+
+    #[test]
+    fn prompts_build_map_layers_groups_and_validation() {
+        let mut s = Server::new();
+        let list = s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})).unwrap();
+        assert_eq!(list["result"]["prompts"].as_array().unwrap().len(), 3);
+        let p = s.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": "design_network", "arguments": {"description": "sede con 20 PC", "language": "it", "save_as": "/tmp/x.drawio"}}})).unwrap();
+        let text = p["result"]["messages"][0]["content"]["text"].as_str().unwrap();
+        assert!(text.contains("sede con 20 PC") && text.contains("validate_network") && text.contains("/tmp/x.drawio"));
+        assert_eq!(
+            s.handle(&json!({"jsonrpc": "2.0", "id": 3, "method": "prompts/get", "params": {"name": "nope"}})).unwrap()["error"]["code"],
+            -32602
+        );
+        assert_eq!(
+            s.handle(&json!({"jsonrpc": "2.0", "id": 4, "method": "prompts/get", "params": {"name": "create_map", "arguments": {}}})).unwrap()["error"]
+                ["code"],
+            -32602
+        );
+
+        let out = call(
+            &mut s,
+            "build_map",
+            json!({"title": "Launch", "nodes": [
+            {"label": "Launch", "children": [
+                {"label": "Marketing", "children": [{"label": "Ads"}, {"label": "Social"}]},
+                {"label": "Product", "children": [{"label": "Beta"}]}]}],
+            "links": [{"from": "Ads", "to": "Beta", "label": "promotes"}, {"from": "Launch/Product", "to": "Social"}, {"from": "Nope", "to": "Ads"}]}),
+        );
+        assert_eq!(s.map().node_count(), 6);
+        assert_eq!(s.map().edge_count(), 2);
+        assert_eq!(out["unresolved_links"].as_array().unwrap().len(), 1);
+        assert!(out["outline"].as_str().unwrap().contains("promotes"));
+
+        call(
+            &mut s,
+            "build_map",
+            json!({"title": "Net", "mode": "diagram", "layout": "none", "nodes": [
+            {"label": "R1", "kind": "net.router", "x": 0, "y": 0, "props": {"ip": "10.0.0.1/24", "interfaces": "eth0=10.0.0.1/24"}},
+            {"label": "PC", "kind": "net.pc", "x": 300, "y": 0, "props": {"ip": "10.0.0.1/24", "gateway": "10.0.1.1"}}],
+            "links": [{"from": "R1", "to": "PC", "label": "eth9 ↔ en0", "route": "orthogonal", "arrows": "none"}]}),
+        );
+        assert_eq!(s.map().mode(), ideacraft_engine::core::Mode::Diagram);
+        let report = call(&mut s, "validate_network", json!({"language": "it"}));
+        assert_eq!(report["errors"], 1, "{report}");
+        let codes: Vec<&str> = report["findings"].as_array().unwrap().iter().map(|f| f["code"].as_str().unwrap()).collect();
+        assert!(
+            codes.contains(&"duplicate-address") && codes.contains(&"gateway-outside-subnet") && codes.contains(&"unknown-interface"),
+            "{codes:?}"
+        );
+        let layers = call(&mut s, "set_layer", json!({"ids": [1], "layer": "Core", "locked": true}));
+        assert_eq!(layers["result"][0]["locked"], true);
+        assert_eq!(s.map().node(ideacraft_engine::core::NodeId(1)).unwrap().layer.as_deref(), Some("Core"));
+        call(&mut s, "group", json!({"ids": [1, 2]}));
+        assert_eq!(s.map().group_members(ideacraft_engine::core::NodeId(1)).len(), 2);
+        call(&mut s, "group", json!({"ids": [1], "ungroup": true}));
+        assert_eq!(s.map().group_members(ideacraft_engine::core::NodeId(1)).len(), 1);
     }
 
     #[test]

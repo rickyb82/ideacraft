@@ -39,6 +39,14 @@ impl D {
         id
     }
 
+    /// Puts shapes on a layer (created on first use).
+    fn layer(&mut self, en: &str, it: &str, ids: &[NodeId]) {
+        let name = self.t(en, it).to_string();
+        for id in ids {
+            let _ = self.map.set_node_layer(*id, Some(&name));
+        }
+    }
+
     fn link(&mut self, a: NodeId, b: NodeId, en: &str, it: &str, style: EdgeStyle) {
         let label = self.t(en, it).to_string();
         if let Ok(e) = self.map.connect(a, b, &label) {
@@ -86,22 +94,101 @@ const REPORTS: EdgeStyle = EdgeStyle {
 /// An office network: internet, firewall, core switch, servers, Wi-Fi and clients.
 pub fn office_network(lang: Lang) -> Map {
     let mut d = D::new("Office network", "Rete aziendale", lang);
-    d.container("Data centre", "Sala server", 600.0, 420.0, 460.0, 300.0);
-    d.container("Office floor", "Uffici", 290.0, 680.0, 600.0, 300.0);
+    let dc = d.container("Data centre", "Sala server", 600.0, 420.0, 460.0, 300.0);
+    let floor = d.container("Office floor", "Uffici", 290.0, 680.0, 600.0, 300.0);
     let internet = d.shape("net.internet", "Internet", "Internet", 60.0, 60.0, &[("provider", "ISP"), ("status", "up")]);
-    let fw = d.shape("net.firewall", "Firewall", "Firewall", 300.0, 60.0, &[("ip", "192.168.1.1"), ("model", "FW-200"), ("status", "up")]);
+    let fw = d.shape(
+        "net.firewall",
+        "Firewall",
+        "Firewall",
+        300.0,
+        60.0,
+        &[
+            ("ip", "192.168.1.1/24"),
+            ("interfaces", "wan=203.0.113.2/30; lan=192.168.1.1/24; vlan10=192.168.10.1/24; vlan20=192.168.20.1/24; vlan30=192.168.30.1/24"),
+            ("model", "FW-200"),
+            ("status", "up"),
+        ],
+    );
     let vpn = d.shape("net.vpn", "VPN users", "Utenti VPN", 540.0, 60.0, &[("tunnel", "IPsec")]);
-    let core = d.shape("net.switch", "Core switch", "Switch core", 300.0, 360.0, &[("ip", "192.168.1.2"), ("ports", "48"), ("status", "up")]);
-    let srv1 = d.shape("net.server", "File server", "File server", 480.0, 360.0, &[("ip", "192.168.10.10"), ("os", "Linux"), ("status", "up")]);
-    let srv2 = d.shape("cloud.vm", "App server", "Server applicativo", 720.0, 360.0, &[("ip", "192.168.10.11"), ("status", "warning")]);
-    let nas = d.shape("net.storage", "NAS", "NAS", 600.0, 500.0, &[("ip", "192.168.10.20"), ("capacity", "24 TB"), ("status", "up")]);
-    let office = d.shape("net.switch", "Office switch", "Switch uffici", 220.0, 600.0, &[("ip", "192.168.1.3"), ("ports", "24"), ("status", "up")]);
+    let core = d.shape(
+        "net.switch",
+        "Core switch",
+        "Switch core",
+        300.0,
+        360.0,
+        &[
+            ("ip", "192.168.1.2/24"),
+            ("gateway", "192.168.1.1"),
+            ("vlans", "1,10,20,30"),
+            ("interfaces", "Gi0/1 trunk 1,10,20,30; Gi0/2 vlan 10; Gi0/24 trunk 20,30"),
+            ("ports", "48"),
+            ("status", "up"),
+        ],
+    );
+    let srv1 = d.shape(
+        "net.server",
+        "File server",
+        "File server",
+        480.0,
+        360.0,
+        &[("ip", "192.168.10.10/24"), ("gateway", "192.168.10.1"), ("vlan", "10"), ("os", "Linux"), ("status", "up")],
+    );
+    let srv2 = d.shape(
+        "cloud.vm",
+        "App server",
+        "Server applicativo",
+        720.0,
+        360.0,
+        &[("ip", "192.168.10.11/24"), ("gateway", "192.168.10.1"), ("vlan", "10"), ("status", "warning")],
+    );
+    let nas = d.shape(
+        "net.storage",
+        "NAS",
+        "NAS",
+        600.0,
+        500.0,
+        &[("ip", "192.168.10.20/24"), ("gateway", "192.168.10.1"), ("vlan", "10"), ("capacity", "24 TB"), ("status", "up")],
+    );
+    let office = d.shape(
+        "net.switch",
+        "Office switch",
+        "Switch uffici",
+        220.0,
+        600.0,
+        &[
+            ("ip", "192.168.1.3/24"),
+            ("gateway", "192.168.1.1"),
+            ("vlans", "20,30"),
+            ("interfaces", "Gi0/1 trunk 20,30; Gi0/2 vlan 30"),
+            ("ports", "24"),
+            ("status", "up"),
+        ],
+    );
     let ap = d.shape("net.wifi", "Access point", "Access point", 60.0, 600.0, &[("ssid", "Office"), ("vlan", "30"), ("status", "down")]);
-    let printer = d.shape("net.printer", "Printer", "Stampante", 380.0, 600.0, &[("ip", "192.168.20.50")]);
-    let pc1 = d.shape("net.pc", "Workstation 1", "Postazione 1", 60.0, 760.0, &[("ip", "192.168.20.21"), ("user", "Anna")]);
-    let pc2 = d.shape("net.pc", "Workstation 2", "Postazione 2", 220.0, 760.0, &[("ip", "192.168.20.22"), ("user", "Luca")]);
+    let printer =
+        d.shape("net.printer", "Printer", "Stampante", 380.0, 600.0, &[("ip", "192.168.20.50/24"), ("gateway", "192.168.20.1"), ("vlan", "20")]);
+    let pc1 = d.shape(
+        "net.pc",
+        "Workstation 1",
+        "Postazione 1",
+        60.0,
+        760.0,
+        &[("ip", "192.168.20.21/24"), ("gateway", "192.168.20.1"), ("vlan", "20"), ("user", "Anna")],
+    );
+    let pc2 = d.shape(
+        "net.pc",
+        "Workstation 2",
+        "Postazione 2",
+        220.0,
+        760.0,
+        &[("ip", "192.168.20.22/24"), ("gateway", "192.168.20.1"), ("vlan", "20"), ("user", "Luca")],
+    );
     let laptop = d.shape("net.laptop", "Laptop", "Portatile", 380.0, 760.0, &[("ip", "DHCP"), ("vlan", "30")]);
     let phone = d.shape("net.phone", "Phone", "Telefono", 520.0, 760.0, &[("ip", "DHCP"), ("vlan", "30")]);
+    d.layer("Perimeter", "Perimetro", &[internet, fw, vpn, core]);
+    d.layer("Data centre", "Sala server", &[dc, srv1, srv2, nas]);
+    d.layer("Office floor", "Uffici", &[floor, office, ap, printer, pc1, pc2, laptop, phone]);
     d.link(internet, fw, "WAN", "WAN", WIRE);
     d.link(vpn, fw, "VPN", "VPN", EdgeStyle { line: LineStyle::Dashed, ..WIRE });
     d.link(fw, core, "LAN 10 Gbit", "LAN 10 Gbit", WIRE);

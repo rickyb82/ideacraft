@@ -59,6 +59,12 @@ pub struct IdeaApp {
     pub shape_filter: String,
     /// How many shapes were added at the view centre since the view last moved (to fan them out).
     added_at_center: u32,
+    /// The name typed for a new layer in the Layers panel.
+    pub new_layer: String,
+    /// A layer being renamed in the Layers panel: (current name, draft).
+    rename_layer: Option<(String, String)>,
+    /// The last network check, shown in the Check panel.
+    pub check: Option<CheckReport>,
 }
 
 /// The panels of the left rail.
@@ -68,7 +74,29 @@ pub enum SidePanel {
     Shapes,
     Elements,
     Layout,
+    Layers,
+    Check,
     Files,
+}
+
+/// The result of the last network check (`net.validate`), kept for the Check panel.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CheckReport {
+    pub errors: usize,
+    pub warnings: usize,
+    pub infos: usize,
+    pub findings: Vec<CheckFinding>,
+}
+
+/// One finding of the network check, in the interface language.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckFinding {
+    pub code: String,
+    /// `error`, `warning` or `info`.
+    pub severity: String,
+    pub message: String,
+    pub nodes: Vec<u64>,
+    pub edges: Vec<u64>,
 }
 
 /// Something only the host app can do.
@@ -159,6 +187,57 @@ impl IdeaApp {
             new_prop: (String::new(), String::new()),
             shape_filter: String::new(),
             added_at_center: 0,
+            new_layer: String::new(),
+            rename_layer: None,
+            check: None,
+        }
+    }
+
+    /// Runs the network check (`net.validate`) in the interface language and keeps the report
+    /// for the Check panel; the status bar gets the summary.
+    pub fn check_network(&mut self) -> Option<&CheckReport> {
+        self.commit_edit();
+        let v = self.run("net.validate", json!({"language": self.language.code()}))?;
+        let count = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0) as usize;
+        let findings = v
+            .get("findings")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|f| CheckFinding {
+                        code: f.get("code").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        severity: f.get("severity").and_then(Value::as_str).unwrap_or("info").to_string(),
+                        message: f.get("message").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        nodes: f.get("nodes").and_then(Value::as_array).map(|n| n.iter().filter_map(Value::as_u64).collect()).unwrap_or_default(),
+                        edges: f.get("edges").and_then(Value::as_array).map(|n| n.iter().filter_map(Value::as_u64).collect()).unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let report = CheckReport { errors: count("errors"), warnings: count("warnings"), infos: count("infos"), findings };
+        self.status = if report.findings.is_empty() {
+            self.tr("Network check: no problems found").to_string()
+        } else {
+            self.language.fill(
+                "Network check: {errors} errors, {warnings} warnings, {infos} notes",
+                &[("errors", &report.errors.to_string()), ("warnings", &report.warnings.to_string()), ("infos", &report.infos.to_string())],
+            )
+        };
+        self.check = Some(report);
+        self.check.as_ref()
+    }
+
+    /// Selects a finding's shapes (or its link) so the user sees where the problem is.
+    pub fn show_finding(&mut self, finding: &CheckFinding) {
+        self.commit_edit();
+        if finding.nodes.is_empty() {
+            if let Some(e) = finding.edges.first() {
+                self.run("selection.clear", json!({}));
+                self.edge_selection = Some(ideacraft_engine::core::EdgeId(*e));
+            }
+        } else {
+            self.edge_selection = None;
+            self.run("selection.set", json!({"ids": finding.nodes}));
         }
     }
 
@@ -507,7 +586,7 @@ mod tests {
         app.add_shape_in_view("net.switch");
         assert!(app.is_diagram());
         assert_eq!(app.session.map().node_count(), 2);
-        app.run("node.setProps", json!({"id": 1, "props": {"ip": "10.0.0.1", "status": "down"}}));
+        app.run("node.setProps", json!({"id": 1, "props": {"ip": "10.0.0.256", "status": "down"}}));
         app.run("node.move", json!({"id": 2, "x": 400, "y": 0}));
         app.view.fit_pending = false;
         app.view.pan = egui::Vec2::ZERO;
@@ -554,11 +633,43 @@ mod tests {
         assert!(app.edge_selection.is_some(), "clicking a link selects it");
         frame(&mut app, &ctx, vec![key(egui::Key::Delete, egui::Modifiers::NONE)]);
         assert_eq!(app.session.map().edge_count(), 0, "Delete removes the selected link");
+        // Groups: Cmd+G groups both shapes, clicking one then selects both, Cmd+Shift+G ungroups.
+        let node = |app: &IdeaApp, id: u64| app.session.map().node(ideacraft_engine::core::NodeId(id)).cloned().unwrap();
+        app.run("selection.set", json!({"ids": [1, 2]}));
+        frame(&mut app, &ctx, vec![key(egui::Key::G, egui::Modifiers::COMMAND)]);
+        assert!(node(&app, 1).group.is_some() && node(&app, 1).group == node(&app, 2).group, "Cmd+G groups the selection");
+        app.run("selection.clear", json!({}));
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(at(r)), press(at(r), true), press(at(r), false)]);
+        assert_eq!(app.session.selection().len(), 2, "clicking a grouped shape selects its group");
+        frame(&mut app, &ctx, vec![key(egui::Key::G, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)]);
+        assert!(node(&app, 1).group.is_none(), "Cmd+Shift+G ungroups");
+        // Layers: shapes on a locked layer are not picked on the canvas; hidden ones are not drawn.
+        app.run("node.setLayer", json!({"ids": [1], "layer": "Core"}));
+        app.run("layer.setLocked", json!({"name": "Core", "locked": true}));
+        app.run("selection.clear", json!({}));
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(at(r)), press(at(r), true), press(at(r), false)]);
+        assert!(app.session.selection().is_empty(), "a locked shape is not selectable");
+        app.run("layer.setLocked", json!({"name": "Core", "locked": false}));
+        app.run("layer.setVisible", json!({"name": "Core", "visible": false}));
+        frame(&mut app, &ctx, vec![]);
+        assert!(!app.session.map().is_visible(ideacraft_engine::core::NodeId(1)));
+        app.run("layer.setVisible", json!({"name": "Core", "visible": true}));
+        // The network check finds the router's missing mask and reports in Italian.
+        app.language = Language::It;
+        let report = app.check_network().cloned().unwrap();
+        assert!(!report.findings.is_empty(), "{report:?}");
+        assert!(app.status.starts_with("Verifica rete"), "{}", app.status);
+        let first = report.findings[0].clone();
+        app.show_finding(&first);
+        assert!(!app.session.selection().is_empty() || app.edge_selection.is_some());
         app.dark = true;
         frame(&mut app, &ctx, vec![]);
-        app.sidebar = Some(SidePanel::Elements);
-        frame(&mut app, &ctx, vec![]);
-        app.sidebar = Some(SidePanel::Layout);
+        for panel in [SidePanel::Elements, SidePanel::Layout, SidePanel::Layers, SidePanel::Check] {
+            app.sidebar = Some(panel);
+            frame(&mut app, &ctx, vec![]);
+        }
+        app.rename_layer = Some(("Core".into(), "Backbone".into()));
+        app.new_layer = "Edge".into();
         frame(&mut app, &ctx, vec![]);
     }
 

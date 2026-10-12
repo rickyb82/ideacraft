@@ -11,10 +11,12 @@ pub enum Category {
     Network,
     Cloud,
     People,
+    Uml,
+    Bpmn,
 }
 
 impl Category {
-    pub const ALL: [Self; 5] = [Self::Basic, Self::Flowchart, Self::Network, Self::Cloud, Self::People];
+    pub const ALL: [Self; 7] = [Self::Basic, Self::Flowchart, Self::Network, Self::Cloud, Self::People, Self::Uml, Self::Bpmn];
 
     pub const fn name(self) -> &'static str {
         match self {
@@ -23,6 +25,8 @@ impl Category {
             Self::Network => "Network",
             Self::Cloud => "Cloud & servers",
             Self::People => "People & places",
+            Self::Uml => "UML",
+            Self::Bpmn => "BPMN",
         }
     }
 
@@ -33,6 +37,21 @@ impl Category {
             Self::Network => "Rete",
             Self::Cloud => "Cloud e server",
             Self::People => "Persone e luoghi",
+            Self::Uml => "UML",
+            Self::Bpmn => "BPMN",
+        }
+    }
+
+    /// The id prefix of the category's stencils (`net.`, `uml.`…).
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Basic => "basic.",
+            Self::Flowchart => "flow.",
+            Self::Network => "net.",
+            Self::Cloud => "cloud.",
+            Self::People => "people.",
+            Self::Uml => "uml.",
+            Self::Bpmn => "bpmn.",
         }
     }
 }
@@ -343,6 +362,164 @@ const CAMERA: Glyph = Glyph {
     fills: &[],
 };
 
+#[allow(clippy::too_many_arguments)]
+const fn sized(
+    id: &'static str,
+    name: &'static str,
+    name_it: &'static str,
+    category: Category,
+    shape: Shape,
+    w: f32,
+    h: f32,
+    color: Rgb,
+    glyph: Glyph,
+) -> Stencil {
+    Stencil { id, name, name_it, category, shape, size: Size { w, h }, color, glyph }
+}
+
+// ---- network extras ------------------------------------------------------------------------------
+
+const MODEM: Glyph = Glyph {
+    lines: &[&[(0.06, 0.4), (0.94, 0.4), (0.94, 0.7), (0.06, 0.7), (0.06, 0.4)], &[(0.78, 0.4), (0.78, 0.18)], &[(0.86, 0.4), (0.86, 0.12)]],
+    circles: &[(0.2, 0.55, 0.035), (0.32, 0.55, 0.035), (0.44, 0.55, 0.035)],
+    fills: &[],
+};
+
+const TABLET: Glyph = Glyph {
+    lines: &[
+        &[(0.16, 0.08), (0.84, 0.08), (0.84, 0.92), (0.16, 0.92), (0.16, 0.08)],
+        &[(0.24, 0.18), (0.76, 0.18), (0.76, 0.78), (0.24, 0.78), (0.24, 0.18)],
+    ],
+    circles: &[(0.5, 0.86, 0.03)],
+    fills: &[],
+};
+
+const IOT: Glyph = Glyph {
+    lines: &[
+        &[(0.36, 0.36), (0.64, 0.36), (0.64, 0.64), (0.36, 0.64), (0.36, 0.36)],
+        &[(0.5, 0.36), (0.5, 0.14)],
+        &[(0.5, 0.64), (0.5, 0.86)],
+        &[(0.36, 0.5), (0.14, 0.5)],
+        &[(0.64, 0.5), (0.86, 0.5)],
+    ],
+    circles: &[(0.5, 0.14, 0.05), (0.5, 0.86, 0.05), (0.14, 0.5, 0.05), (0.86, 0.5, 0.05)],
+    fills: &[],
+};
+
+const WAN: Glyph = glyph(
+    &[
+        &[
+            (0.2, 0.7),
+            (0.1, 0.62),
+            (0.1, 0.5),
+            (0.2, 0.42),
+            (0.3, 0.3),
+            (0.46, 0.26),
+            (0.6, 0.3),
+            (0.72, 0.4),
+            (0.86, 0.44),
+            (0.92, 0.56),
+            (0.86, 0.68),
+            (0.76, 0.72),
+            (0.2, 0.72),
+        ],
+        &[(0.3, 0.84), (0.7, 0.84)],
+        &[(0.34, 0.92), (0.66, 0.92)],
+    ],
+    &[],
+);
+
+const RACK: Glyph = glyph(
+    &[
+        &[(0.16, 0.06), (0.84, 0.06), (0.84, 0.94), (0.16, 0.94), (0.16, 0.06)],
+        &[(0.16, 0.28), (0.84, 0.28)],
+        &[(0.16, 0.5), (0.84, 0.5)],
+        &[(0.16, 0.72), (0.84, 0.72)],
+        &[(0.26, 0.17), (0.6, 0.17)],
+        &[(0.26, 0.39), (0.6, 0.39)],
+        &[(0.26, 0.61), (0.6, 0.61)],
+        &[(0.26, 0.83), (0.6, 0.83)],
+    ],
+    &[(0.72, 0.17, 0.03), (0.72, 0.39, 0.03), (0.72, 0.61, 0.03), (0.72, 0.83, 0.03)],
+);
+
+const UPS: Glyph = Glyph {
+    lines: &[
+        &[(0.14, 0.14), (0.86, 0.14), (0.86, 0.86), (0.14, 0.86), (0.14, 0.14)],
+        &[(0.56, 0.24), (0.38, 0.52), (0.52, 0.52), (0.44, 0.76), (0.64, 0.46), (0.5, 0.46), (0.56, 0.24)],
+    ],
+    circles: &[],
+    fills: &[],
+};
+
+// ---- UML -----------------------------------------------------------------------------------------
+
+const ACTOR: Glyph = Glyph {
+    lines: &[&[(0.5, 0.3), (0.5, 0.62)], &[(0.22, 0.4), (0.78, 0.4)], &[(0.26, 0.92), (0.5, 0.62), (0.74, 0.92)]],
+    circles: &[(0.5, 0.18, 0.12)],
+    fills: &[],
+};
+
+const CLASS: Glyph = glyph(
+    &[
+        &[(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9), (0.1, 0.1)],
+        &[(0.1, 0.36), (0.9, 0.36)],
+        &[(0.1, 0.64), (0.9, 0.64)],
+        &[(0.2, 0.5), (0.6, 0.5)],
+        &[(0.2, 0.77), (0.5, 0.77)],
+    ],
+    &[],
+);
+
+const INTERFACE: Glyph = Glyph { lines: &[&[(0.7, 0.5), (0.9, 0.5)]], circles: &[(0.5, 0.5, 0.2)], fills: &[] };
+
+const COMPONENT: Glyph = glyph(
+    &[
+        &[(0.26, 0.14), (0.9, 0.14), (0.9, 0.86), (0.26, 0.86), (0.26, 0.14)],
+        &[(0.1, 0.32), (0.4, 0.32), (0.4, 0.44), (0.1, 0.44), (0.1, 0.32)],
+        &[(0.1, 0.56), (0.4, 0.56), (0.4, 0.68), (0.1, 0.68), (0.1, 0.56)],
+    ],
+    &[],
+);
+
+const PACKAGE: Glyph =
+    glyph(&[&[(0.1, 0.3), (0.1, 0.9), (0.9, 0.9), (0.9, 0.3), (0.1, 0.3)], &[(0.1, 0.3), (0.1, 0.14), (0.44, 0.14), (0.5, 0.3)]], &[]);
+
+const USE_CASE: Glyph = Glyph { lines: &[], circles: &[], fills: &[] };
+
+const DEVICE_NODE: Glyph = glyph(
+    &[
+        &[(0.1, 0.3), (0.7, 0.3), (0.7, 0.9), (0.1, 0.9), (0.1, 0.3)],
+        &[(0.1, 0.3), (0.3, 0.1), (0.9, 0.1), (0.9, 0.7), (0.7, 0.9)],
+        &[(0.7, 0.3), (0.9, 0.1)],
+    ],
+    &[],
+);
+
+// ---- BPMN ----------------------------------------------------------------------------------------
+
+const GATEWAY_X: Glyph = glyph(&[&[(0.34, 0.34), (0.66, 0.66)], &[(0.66, 0.34), (0.34, 0.66)]], &[]);
+const GATEWAY_PLUS: Glyph = glyph(&[&[(0.5, 0.28), (0.5, 0.72)], &[(0.28, 0.5), (0.72, 0.5)]], &[]);
+const GATEWAY_O: Glyph = Glyph { lines: &[], circles: &[(0.5, 0.5, 0.2)], fills: &[] };
+const EVENT_TIMER: Glyph = Glyph { lines: &[&[(0.5, 0.5), (0.5, 0.28)], &[(0.5, 0.5), (0.66, 0.58)]], circles: &[(0.5, 0.5, 0.34)], fills: &[] };
+const EVENT_MESSAGE: Glyph = glyph(&[&[(0.2, 0.3), (0.8, 0.3), (0.8, 0.7), (0.2, 0.7), (0.2, 0.3)], &[(0.2, 0.3), (0.5, 0.52), (0.8, 0.3)]], &[]);
+const USER_TASK: Glyph =
+    Glyph { lines: &[&[(0.3, 0.8), (0.34, 0.66), (0.5, 0.6), (0.66, 0.66), (0.7, 0.8)]], circles: &[(0.5, 0.42, 0.12)], fills: &[] };
+const SERVICE_TASK: Glyph = Glyph {
+    lines: &[&[(0.5, 0.24), (0.5, 0.34)], &[(0.5, 0.66), (0.5, 0.76)], &[(0.24, 0.5), (0.34, 0.5)], &[(0.66, 0.5), (0.76, 0.5)]],
+    circles: &[(0.5, 0.5, 0.18), (0.5, 0.5, 0.07)],
+    fills: &[],
+};
+const DATA_STORE: Glyph = glyph(
+    &[
+        &[(0.2, 0.26), (0.2, 0.76)],
+        &[(0.8, 0.26), (0.8, 0.76)],
+        &[(0.2, 0.76), (0.3, 0.86), (0.7, 0.86), (0.8, 0.76)],
+        &[(0.2, 0.26), (0.3, 0.16), (0.7, 0.16), (0.8, 0.26), (0.7, 0.36), (0.3, 0.36), (0.2, 0.26)],
+    ],
+    &[],
+);
+
 /// Every stencil, by category.
 pub const ALL: &[Stencil] = &[
     // Basic
@@ -395,6 +572,37 @@ pub const ALL: &[Stencil] = &[
     icon("people.team", "Team", "Team", Category::People, WHITE, TEAM),
     icon("people.office", "Office / Site", "Sede / Ufficio", Category::People, GREY, BUILDING),
     icon("people.home", "Home", "Casa", Category::People, WHITE, HOME),
+    icon("net.modem", "Modem / ONT", "Modem / ONT", Category::Network, WHITE, MODEM),
+    icon("net.wan", "WAN / MPLS", "WAN / MPLS", Category::Network, LILAC, WAN),
+    icon("net.rack", "Rack", "Rack", Category::Network, GREY, RACK),
+    icon("net.ups", "UPS", "UPS", Category::Network, YELLOW, UPS),
+    icon("net.tablet", "Tablet", "Tablet", Category::Network, WHITE, TABLET),
+    icon("net.iot", "IoT device", "Dispositivo IoT", Category::Network, GREEN, IOT),
+    // UML
+    sized("uml.actor", "Actor", "Attore", Category::Uml, Shape::Text, 80.0, 100.0, WHITE, ACTOR),
+    sized("uml.usecase", "Use case", "Caso d'uso", Category::Uml, Shape::Ellipse, 150.0, 70.0, BLUE, USE_CASE),
+    sized("uml.class", "Class", "Classe", Category::Uml, Shape::Rect, 140.0, 100.0, WHITE, CLASS),
+    sized("uml.interface", "Interface", "Interfaccia", Category::Uml, Shape::Rounded, 120.0, 80.0, GREEN, INTERFACE),
+    sized("uml.component", "Component", "Componente", Category::Uml, Shape::Rect, 130.0, 90.0, BLUE, COMPONENT),
+    sized("uml.package", "Package", "Package", Category::Uml, Shape::Rect, 130.0, 90.0, YELLOW, PACKAGE),
+    sized("uml.node", "Node / Device", "Nodo / Dispositivo", Category::Uml, Shape::Rect, 130.0, 90.0, GREY, DEVICE_NODE),
+    plain("uml.state", "State", "Stato", Category::Uml, Shape::Rounded, 130.0, 60.0, LILAC),
+    plain("uml.note", "Note", "Nota", Category::Uml, Shape::Note, 130.0, 80.0, YELLOW),
+    // BPMN
+    plain("bpmn.start", "Start event", "Evento di inizio", Category::Bpmn, Shape::Ellipse, 48.0, 48.0, GREEN),
+    plain("bpmn.end", "End event", "Evento di fine", Category::Bpmn, Shape::Ellipse, 48.0, 48.0, PEACH),
+    sized("bpmn.timer", "Timer event", "Evento temporale", Category::Bpmn, Shape::Ellipse, 48.0, 48.0, YELLOW, EVENT_TIMER),
+    sized("bpmn.message", "Message event", "Evento messaggio", Category::Bpmn, Shape::Ellipse, 48.0, 48.0, YELLOW, EVENT_MESSAGE),
+    plain("bpmn.task", "Task", "Attività", Category::Bpmn, Shape::Rounded, 130.0, 70.0, BLUE),
+    sized("bpmn.usertask", "User task", "Attività utente", Category::Bpmn, Shape::Rounded, 130.0, 80.0, BLUE, USER_TASK),
+    sized("bpmn.servicetask", "Service task", "Attività di servizio", Category::Bpmn, Shape::Rounded, 130.0, 80.0, BLUE, SERVICE_TASK),
+    plain("bpmn.subprocess", "Subprocess", "Sottoprocesso", Category::Bpmn, Shape::Subprocess, 150.0, 80.0, BLUE),
+    sized("bpmn.gateway", "Exclusive gateway", "Gateway esclusivo", Category::Bpmn, Shape::Diamond, 60.0, 60.0, YELLOW, GATEWAY_X),
+    sized("bpmn.parallel", "Parallel gateway", "Gateway parallelo", Category::Bpmn, Shape::Diamond, 60.0, 60.0, YELLOW, GATEWAY_PLUS),
+    sized("bpmn.inclusive", "Inclusive gateway", "Gateway inclusivo", Category::Bpmn, Shape::Diamond, 60.0, 60.0, YELLOW, GATEWAY_O),
+    plain("bpmn.data", "Data object", "Oggetto dati", Category::Bpmn, Shape::Document, 90.0, 70.0, WHITE),
+    sized("bpmn.store", "Data store", "Archivio dati", Category::Bpmn, Shape::Rounded, 90.0, 80.0, GREY, DATA_STORE),
+    plain("bpmn.pool", "Pool / Lane", "Pool / Corsia", Category::Bpmn, Shape::Container, 520.0, 160.0, GREY),
 ];
 
 pub fn find(id: &str) -> Option<&'static Stencil> {
@@ -426,5 +634,6 @@ mod tests {
         }
         assert_eq!(find("NET.ROUTER").map(|s| s.name), Some("Router"));
         assert!(Category::ALL.iter().all(|c| in_category(*c).count() >= 4));
+        assert!(ALL.iter().all(|s| s.id.starts_with(s.category.prefix())), "ids carry their category prefix");
     }
 }

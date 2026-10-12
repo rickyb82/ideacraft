@@ -177,8 +177,22 @@ fn laid_sized(ui: &egui::Ui, n: &Node, rect: Rect, font: &FontId, text: Color32,
     Laid { id: n.id, rect, galley, label_pos }
 }
 
-fn hit(laid: &[Laid], p: Pos2) -> Option<NodeId> {
-    laid.iter().rev().find(|l| l.rect.contains(p)).map(|l| l.id)
+/// The topmost shape under `p`; shapes on a locked layer are not picked.
+fn hit(map: &Map, laid: &[Laid], p: Pos2) -> Option<NodeId> {
+    laid.iter().rev().find(|l| l.rect.contains(p) && !map.is_locked(l.id)).map(|l| l.id)
+}
+
+/// `ids` with every member of their groups (minus locked shapes), in a stable order.
+fn with_groups(map: &Map, ids: impl IntoIterator<Item = NodeId>) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    for id in ids {
+        for m in map.group_members(id) {
+            if !map.is_locked(m) && !out.contains(&m.0) {
+                out.push(m.0);
+            }
+        }
+    }
+    out
 }
 
 /// The resize handle under `p` on the selected node's rectangle.
@@ -502,6 +516,16 @@ fn draw(app: &IdeaApp, painter: &egui::Painter, f: &Frame, laid: &[Laid], t: &To
         painter.rect_filled(r, 4.0 * f.zoom, t.link_label_bg);
         painter.galley(r.min + vec2(4.0, 2.0) * f.zoom, g, color);
     }
+    // A dashed frame around each group that has a selected member.
+    let mut groups: Vec<u64> = selected.iter().filter_map(|id| map.node(*id).and_then(|n| n.group)).collect();
+    groups.sort_unstable();
+    groups.dedup();
+    for g in groups {
+        let members = laid.iter().filter(|l| map.node(l.id).is_some_and(|n| n.group == Some(g))).map(|l| l.rect);
+        if let Some(r) = members.reduce(|a, b| a.union(b)) {
+            dashed_rect(painter, r.expand(6.0 * f.zoom), Stroke::new(1.0, t.selection), 6.0);
+        }
+    }
     // Resize handles on a single selected shape.
     if let [only] = selected
         && app.editing.is_none()
@@ -545,6 +569,10 @@ pub(crate) fn keyboard(app: &mut IdeaApp, ui: &egui::Ui) {
         app.run("selection.all", json!({}));
     } else if pressed(Modifiers::COMMAND, Key::D) {
         app.run("edit.duplicate", json!({}));
+    } else if pressed(shift_cmd, Key::G) {
+        app.run("group.ungroup", json!({}));
+    } else if pressed(Modifiers::COMMAND, Key::G) {
+        app.run("group.create", json!({}));
     } else if pressed(Modifiers::COMMAND, Key::CloseBracket) {
         app.run("node.setZ", json!({"z": "front"}));
     } else if pressed(Modifiers::COMMAND, Key::OpenBracket) {
@@ -597,13 +625,20 @@ pub(crate) fn keyboard(app: &mut IdeaApp, ui: &egui::Ui) {
     }
 }
 
+/// Selects a shape, with the rest of its group. With `additive` (Cmd/Shift) the group is toggled
+/// in or out of the current selection.
 fn select(app: &mut IdeaApp, id: NodeId, additive: bool) {
     app.edge_selection = None;
+    let members = with_groups(app.session.map(), [id]);
     let mut ids: Vec<u64> = if additive { app.session.selection().iter().map(|n| n.0).collect() } else { Vec::new() };
-    if let Some(i) = ids.iter().position(|n| *n == id.0) {
-        ids.remove(i);
+    if ids.contains(&id.0) {
+        ids.retain(|n| !members.contains(n));
     } else {
-        ids.push(id.0);
+        for m in members {
+            if !ids.contains(&m) {
+                ids.push(m);
+            }
+        }
     }
     app.run("selection.set", json!({"ids": ids}));
 }
@@ -683,14 +718,14 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
     let handles_on = single_rect
         .is_some_and(|_| diagram || app.session.selection().first().and_then(|id| app.session.map().node(*id)).is_some_and(|n| n.size.is_some()));
 
-    app.canvas.hover = pointer.filter(|_| resp.hovered()).and_then(|p| hit(&laid, p));
+    app.canvas.hover = pointer.filter(|_| resp.hovered()).and_then(|p| hit(app.session.map(), &laid, p));
 
     if resp.drag_started() {
         app.commit_edit();
         // Where the button went down, not where the pointer is now that the drag is recognised.
         let p = ui.input(|i| i.pointer.press_origin()).or(pointer).unwrap_or_default();
         let handle = single_rect.filter(|_| handles_on).and_then(|r| handle_hit(r, p).map(|c| (r, c)));
-        let on = hit(&laid, p);
+        let on = hit(app.session.map(), &laid, p);
         app.canvas.drag = match (handle, on) {
             (Some((r, corner)), _) => {
                 let id = app.session.selection()[0];
@@ -749,7 +784,7 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
                 };
                 app.run("node.moveBy", json!({"ids": ids.iter().map(|n| n.0).collect::<Vec<_>>(), "dx": dx, "dy": dy}));
             }
-            Some(Drag::Link { from, to }) => match hit(&laid, to) {
+            Some(Drag::Link { from, to }) => match hit(app.session.map(), &laid, to) {
                 Some(target) if target != from => {
                     if let Some(id) = app.run("edge.add", json!({"from": from.0, "to": target.0})).and_then(|v| v["id"].as_u64()) {
                         app.run("selection.clear", json!({}));
@@ -769,13 +804,10 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
             }
             Some(Drag::Marquee { from, to }) => {
                 let r = Rect::from_two_pos(from, to);
-                let ids: Vec<u64> = laid
-                    .iter()
-                    .filter(|l| {
-                        r.intersects(l.rect) && !app.session.map().node(l.id).is_some_and(|n| n.shape.is_container() && !r.contains_rect(l.rect))
-                    })
-                    .map(|l| l.id.0)
-                    .collect();
+                let inside = laid.iter().filter(|l| {
+                    r.intersects(l.rect) && !app.session.map().node(l.id).is_some_and(|n| n.shape.is_container() && !r.contains_rect(l.rect))
+                });
+                let ids = with_groups(app.session.map(), inside.map(|l| l.id));
                 app.edge_selection = None;
                 app.run("selection.set", json!({"ids": ids}));
             }
@@ -784,7 +816,7 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
         laid = lay_out(ui, app.session.map(), &f, None, t.text);
     }
     if resp.double_clicked() {
-        match pointer.and_then(|p| hit(&laid, p)) {
+        match pointer.and_then(|p| hit(app.session.map(), &laid, p)) {
             Some(id) => app.begin_edit(id),
             None => {
                 if let Some(edge) = pointer.and_then(|p| edge_hit(app.session.map(), &laid, f.zoom, p)) {
@@ -800,7 +832,7 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
         laid = lay_out(ui, app.session.map(), &f, None, t.text);
     } else if resp.clicked() {
         app.commit_edit();
-        match pointer.and_then(|p| hit(&laid, p)) {
+        match pointer.and_then(|p| hit(app.session.map(), &laid, p)) {
             Some(id) => select(app, id, additive),
             None => match pointer.and_then(|p| edge_hit(app.session.map(), &laid, f.zoom, p)) {
                 Some(edge) => {
@@ -921,8 +953,17 @@ fn overlays(app: &mut IdeaApp, ui: &egui::Ui, canvas: Rect, laid: &[Laid], t: &T
                     if icon_button(ui, t, Icon::Link, &link_tip, true, app.link_mode).clicked() {
                         app.link_mode = !app.link_mode;
                     }
-                    if many {
+                    let grouped = app.session.selection().iter().any(|id| app.session.map().node(*id).is_some_and(|n| n.group.is_some()));
+                    if many || grouped {
                         divider(ui, t);
+                        if many && icon_button(ui, t, Icon::Group, &app.tip("group.create"), true, false).clicked() {
+                            app.run("group.create", json!({}));
+                        }
+                        if grouped && icon_button(ui, t, Icon::Ungroup, &app.tip("group.ungroup"), true, false).clicked() {
+                            app.run("group.ungroup", json!({}));
+                        }
+                    }
+                    if many {
                         for (icon, edge, tip) in [
                             (Icon::AlignLeft, "left", "Align left"),
                             (Icon::AlignCenterX, "centerX", "Align centres"),

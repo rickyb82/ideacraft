@@ -234,5 +234,27 @@ mod tests {
         assert!(s.execute("map.stencils", &json!({"language": "it"})).unwrap().as_array().unwrap().len() > 30);
         s.execute("map.setMode", &json!({"mode": "map"})).unwrap();
         assert_eq!(s.map().mode(), ideacraft_core::Mode::Map);
+
+        // Layers, groups and the network check.
+        s.execute("node.setLayer", &json!({"ids": [r, sw], "layer": "Core"})).unwrap();
+        assert_eq!(s.execute("map.layers", &json!({})).unwrap()[0]["nodes"], 2);
+        s.execute("layer.setVisible", &json!({"name": "Core", "visible": false})).unwrap();
+        assert!(!s.map().is_visible(NodeId(r)));
+        assert!(s.execute("layer.setVisible", &json!({"name": "Core"})).is_err());
+        s.execute("layer.rename", &json!({"name": "Core", "to": "Backbone"})).unwrap();
+        s.execute("layer.setLocked", &json!({"name": "Backbone", "locked": true})).unwrap();
+        assert!(s.map().is_locked(NodeId(r)));
+        s.execute("layer.remove", &json!({"name": "Backbone"})).unwrap();
+        assert!(s.map().layers().is_empty() && s.map().is_visible(NodeId(r)));
+        let g = s.execute("group.create", &json!({"ids": [r, sw]})).unwrap()["group"].as_u64().unwrap();
+        assert_eq!(s.map().group_members(NodeId(r)).len(), 2);
+        assert!(s.execute("group.create", &json!({"ids": [r]})).is_err());
+        s.execute("group.ungroup", &json!({"id": sw})).unwrap();
+        assert_eq!(s.map().group_members(NodeId(r)).len(), 1);
+        let _ = g;
+        s.execute("node.setProps", &json!({"id": sw, "props": {"ip": "10.0.0.1", "mask": "255.255.255.0"}})).unwrap();
+        let report = s.execute("net.validate", &json!({"language": "it"})).unwrap();
+        assert_eq!(report["errors"], 1, "{report}");
+        assert!(report["findings"][0]["message"].as_str().unwrap().contains("Indirizzo 10.0.0.1"));
     }
 }
