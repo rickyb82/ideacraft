@@ -47,7 +47,7 @@ pub const COMMANDS: &[CommandInfo] = &[
         "{text, format?: mm|xmind|cxl|opml|md|mermaid|ideacraft} (detected when absent) → {format}",
         false,
     ),
-    c("map.export", "Export", "File › Export", "", "{format: markdown|opml|freemind|ideacraft} → {text}", false),
+    c("map.export", "Export", "File › Export", "", "{format: markdown|opml|freemind|svg|ideacraft} → {text}", false),
     c("map.setTitle", "Rename Map", "File › Rename", "", "{title}", true),
     c("map.info", "Map Info", "File › Info", "", "{} → {title, nodes, links, selection}", false),
     c("node.add", "Add Idea", "Insert › Idea", "", "{label?, x?, y?, parent?} → {id}", true),
@@ -144,7 +144,8 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
                 "opml" => ideacraft_formats::to_opml(&s.map),
                 "freemind" | "mm" => ideacraft_formats::to_freemind(&s.map),
                 "ideacraft" | "json" => s.map.to_json(),
-                _ => return Err(Error::Param("`format` must be markdown, opml, freemind or ideacraft".into())),
+                "svg" => ideacraft_formats::to_svg(&s.map),
+                _ => return Err(Error::Param("`format` must be markdown, opml, freemind, svg or ideacraft".into())),
             };
             Ok(json!({"text": text}))
         }

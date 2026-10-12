@@ -24,9 +24,10 @@ never copy code from GPL/AGPL/LGPL projects (FreeMind, Freeplane, …).
 
 ## Architecture
 - Layers (checked by `cargo xtask layers`): `core` (L0) → `formats` (L2) → `engine` (L5) →
-  `ui-egui` (L6) → `apps/*` (L7). Nothing below L6 depends on egui; only apps use `rfd`/`eframe`.
+  `ui-egui` / `mcp` (L6) → `apps/*` (L7). Nothing below L6 depends on egui; only apps use `rfd`/`eframe`.
 - **Everything is a command** (`crates/engine/src/cmd.rs`: id, label, menu, shortcut, params,
-  undoable). The UI, the CLI and future automation call the same commands.
+  undoable). The UI, the CLI and the MCP server (`crates/mcp`, `ideacraft-cli mcp`) call the same
+  commands; a new user-visible feature is a command first, then a tool or button.
 - **The UI is thin**: it reads `Session` state and acts through `IdeaApp::run`; colours come
   from `theme::Tokens`, icons from `icons.rs` (drawn in code). Host-only actions (file dialogs,
   downloads) go through `IdeaApp::requests`, served by `apps/ideacraft` (rfd) and

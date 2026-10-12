@@ -20,6 +20,7 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 - Web app (WebAssembly, trunk) published to GitHub Pages; browser open/save/export, state kept
   in the browser.
 - English and Italian interface and templates.
+- MCP server (`ideacraft-cli mcp`) for AI agents; SVG export.
 
 ## Next (0.2)
 
@@ -34,7 +35,8 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 
 - Real-time collaboration (CRDT), comments.
 - Presentation mode (walk through branches), PNG/SVG/PDF export.
-- MCP server and a local control channel for agents, like the other craft apps.
+- A live control channel so agents can drive a running desktop or web app (the MCP server works
+  on its own map today).
 - More importers: MindManager-style XML, GraphML, Obsidian canvas.
 
 ## Progress log
@@ -43,3 +45,4 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 |---|---|
 | 2026-10-12 | 0.1: skeleton, canvas, layouts, 12 templates, 6 import formats, 3 export formats, CLI |
 | 2026-10-12 | Italian interface and templates; new canvas-tool interface; web app on GitHub Pages |
+| 2026-10-12 | MCP server for AI agents (16 tools); SVG export; automatic branch colours |

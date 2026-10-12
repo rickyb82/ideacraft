@@ -21,6 +21,17 @@ impl Rgb {
         Self(0xd9, 0xf2, 0xa6),
     ];
 
+    /// Colours given in turn to the main branches of a map (from [`Self::PALETTE`]).
+    pub const BRANCHES: [Self; 7] = [
+        Self(0xb3, 0xd4, 0xff),
+        Self(0xb1, 0xec, 0xd8),
+        Self(0xd4, 0xc4, 0xfb),
+        Self(0xff, 0xc2, 0xa8),
+        Self(0xf6, 0xb8, 0xd1),
+        Self(0xd9, 0xf2, 0xa6),
+        Self(0xff, 0xe0, 0x8a),
+    ];
+
     pub fn parse(text: &str) -> crate::Result<Self> {
         let hex = text.trim().strip_prefix('#').unwrap_or(text.trim());
         let bad = || Error::Color(text.chars().take(32).collect());

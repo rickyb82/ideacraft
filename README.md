@@ -32,11 +32,12 @@ conventions: everything is a command, nothing crashes, and every file stays read
 - **Import** — FreeMind / Freeplane (`.mm`), XMind (`.xmind`, current and legacy), CmapTools
   (`.cxl`), OPML, Markdown / indented outlines, Mermaid (`mindmap`, simple `flowchart`).
   Open a file or drop it on the window.
-- **Export** — Markdown outline, OPML, FreeMind `.mm`, and IdeaCraft's own plain-JSON format
-  (`.ideacraft.json`).
+- **Export** — Markdown outline, OPML, FreeMind `.mm`, SVG, and IdeaCraft's own plain-JSON
+  format (`.ideacraft.json`).
 - **Undo/redo** for every change; the map is restored if a command ever fails.
-- **Headless CLI** for scripts and agents: run any command, convert between formats, list
-  templates.
+- **MCP server for AI agents** — `ideacraft-cli mcp` lets Claude (or any MCP client) create,
+  edit, lay out, export (including SVG) and save maps; see [docs/mcp.md](docs/mcp.md).
+- **Headless CLI** for scripts: run any command, convert between formats, list templates.
 
 ## Run it
 
@@ -74,6 +75,15 @@ Export download the file; the open map, language and theme are kept in the brows
 | Cmd/Ctrl+L, Cmd/Ctrl+Shift+L | tree layout, radial layout |
 | Cmd/Ctrl+0 | fit the map in the window |
 | Cmd/Ctrl+O, S, Shift+S, N | open/import, save, save as, new |
+
+### AI agents (MCP)
+
+```sh
+cargo install --path apps/ideacraft-cli
+claude mcp add ideacraft -- ideacraft-cli mcp
+```
+
+Tools, examples and the Claude Desktop configuration are in [docs/mcp.md](docs/mcp.md).
 
 ### Headless
 

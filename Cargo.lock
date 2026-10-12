@@ -1402,6 +1402,7 @@ name = "ideacraft-cli"
 version = "0.1.0"
 dependencies = [
  "ideacraft-engine",
+ "ideacraft-mcp",
  "serde_json",
 ]
 
@@ -1433,6 +1434,14 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "zip",
+]
+
+[[package]]
+name = "ideacraft-mcp"
+version = "0.1.0"
+dependencies = [
+ "ideacraft-engine",
+ "serde_json",
 ]
 
 [[package]]

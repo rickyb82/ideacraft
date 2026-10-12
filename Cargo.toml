@@ -13,6 +13,7 @@ repository = "https://github.com/rickyb82/ideacraft"
 ideacraft-core = { path = "crates/core", version = "0.1.0" }
 ideacraft-formats = { path = "crates/formats", version = "0.1.0" }
 ideacraft-engine = { path = "crates/engine", version = "0.1.0" }
+ideacraft-mcp = { path = "crates/mcp", version = "0.1.0" }
 ideacraft-ui-egui = { path = "crates/ui-egui", version = "0.1.0" }
 
 thiserror = "2"

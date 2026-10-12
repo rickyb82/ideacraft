@@ -227,7 +227,16 @@ impl Map {
             self.node(p).ok_or(Error::NoNode(p.0))?;
         }
         let id = NodeId(self.fresh_id()?);
-        let color = parent.and_then(|p| self.node(p)).map(|p| p.color).unwrap_or_default();
+        // A new main branch (child of a root) gets the next branch colour; deeper ideas take
+        // their parent's colour, so each branch reads as one colour.
+        let color = match parent.and_then(|p| self.node(p)) {
+            Some(p) if p.parent.is_none() => {
+                let branches = self.nodes.values().filter(|n| n.parent == Some(p.id)).count();
+                Rgb::BRANCHES.get(branches % Rgb::BRANCHES.len()).copied().unwrap_or_default()
+            }
+            Some(p) => p.color,
+            None => Rgb::default(),
+        };
         self.nodes.insert(id, Node { id, label: clean_label(label), pos: pos.clamped(), parent, color, shape: Shape::default(), collapsed: false });
         Ok(id)
     }

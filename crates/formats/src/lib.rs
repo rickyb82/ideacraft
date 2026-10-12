@@ -6,7 +6,7 @@
 //! Mermaid (`mindmap` and simple `flowchart`/`graph`). Formats are read from their public
 //! descriptions and our own test files; no third-party code is used.
 //!
-//! Export: Markdown outline, OPML and FreeMind `.mm`, so maps travel to other tools.
+//! Export: Markdown outline, OPML, FreeMind `.mm` and SVG, so maps travel to other tools.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod build;
@@ -16,12 +16,14 @@ mod freemind;
 mod markdown;
 mod mermaid;
 mod opml;
+mod svg;
 pub mod templates;
 mod xmind;
 mod xml;
 
 pub use export::{to_freemind, to_markdown, to_opml};
 use ideacraft_core::Map;
+pub use svg::to_svg;
 
 /// Largest file read, in bytes.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;

@@ -11,11 +11,13 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("crates/formats", &["ideacraft-core"]),
     ("crates/engine", &["ideacraft-core", "ideacraft-formats"]),
     ("crates/ui-egui", &["ideacraft-engine", "egui"]),
+    ("crates/mcp", &["ideacraft-engine"]),
     ("apps/ideacraft", &["ideacraft-ui-egui", "egui", "eframe", "rfd"]),
-    ("apps/ideacraft-cli", &["ideacraft-engine"]),
+    ("apps/ideacraft-cli", &["ideacraft-engine", "ideacraft-mcp"]),
     ("apps/ideacraft-web", &["ideacraft-ui-egui", "egui", "eframe", "rfd"]),
 ];
-const WATCHED: &[&str] = &["ideacraft-core", "ideacraft-formats", "ideacraft-engine", "ideacraft-ui-egui", "egui", "eframe", "winit", "rfd"];
+const WATCHED: &[&str] =
+    &["ideacraft-core", "ideacraft-formats", "ideacraft-mcp", "ideacraft-engine", "ideacraft-ui-egui", "egui", "eframe", "winit", "rfd"];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().map(Path::to_path_buf).unwrap_or_default()

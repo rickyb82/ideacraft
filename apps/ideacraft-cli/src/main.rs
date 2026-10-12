@@ -6,6 +6,7 @@
 //! ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
 //! ideacraft-cli convert IN OUT                             # import/export by extension
 //! ideacraft-cli outline FILE                               # Markdown outline on stdout
+//! ideacraft-cli mcp                                        # MCP server on stdio, for AI agents
 //! ```
 //! `--in` and `convert` read IdeaCraft maps and every importable format (FreeMind/Freeplane,
 //! XMind, CmapTools CXL, OPML, Markdown, Mermaid); `--out`/`convert` write by extension:
@@ -24,7 +25,8 @@ const USAGE: &str = "usage:
   ideacraft-cli templates
   ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
   ideacraft-cli convert IN OUT
-  ideacraft-cli outline FILE";
+  ideacraft-cli outline FILE
+  ideacraft-cli mcp            (Model Context Protocol server on stdio)";
 
 fn read(path: &str) -> Result<Map, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
@@ -40,6 +42,8 @@ fn render(map: &Map, path: &str) -> String {
         formats::to_opml(map)
     } else if lower.ends_with(".mm") {
         formats::to_freemind(map)
+    } else if lower.ends_with(".svg") {
+        formats::to_svg(map)
     } else {
         map.to_json()
     }
@@ -62,6 +66,10 @@ fn run(args: &[String]) -> Result<(), String> {
                 println!("{:<14} {:<18} {}", t.id, t.name, t.description);
             }
             Ok(())
+        }
+        Some("mcp") => {
+            let stdin = std::io::stdin();
+            ideacraft_mcp::Server::new().serve(stdin.lock(), std::io::stdout()).map_err(|e| format!("mcp: {e}"))
         }
         Some("outline") => {
             let path = args.get(1).ok_or(USAGE)?;

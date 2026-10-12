@@ -1,0 +1,434 @@
+//! IdeaCraft's MCP server (layer L6): the Model Context Protocol over stdio (newline-delimited
+//! JSON-RPC 2.0), so AI agents can create, read, edit, lay out and export concept maps.
+//!
+//! Every edit goes through the engine's commands ([`Session::execute`]), so it is validated, can
+//! be undone (`run_command` with `edit.undo`) and never leaves a half-applied map.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+use std::io::{BufRead, Write};
+
+use ideacraft_engine::core::{Map, NodeId};
+use ideacraft_engine::formats::{self, templates};
+use ideacraft_engine::{COMMANDS, Session};
+use serde_json::{Value, json};
+
+/// MCP protocol revision this server implements.
+pub const PROTOCOL_VERSION: &str = "2025-06-18";
+/// Longest request line read (bytes); longer lines are answered with an error.
+const MAX_LINE: usize = 32 * 1024 * 1024;
+
+const INSTRUCTIONS: &str = "IdeaCraft edits one concept map at a time. Start with new_map (optionally from a template) or open_map, then add ideas \
+with add_idea/add_ideas (children hang under a parent id), connect any two ideas with link_ideas (a labelled concept-map link), \
+rearrange with layout, and read the result with get_map (an outline with ids) or export (svg to look at it). Save with save_map. \
+run_command reaches every engine command (list_commands), including edit.undo and edit.redo.";
+
+/// The server: one open map.
+#[derive(Default)]
+pub struct Server {
+    session: Session,
+    path: Option<String>,
+}
+
+type ToolResult = Result<Value, String>;
+
+fn tools() -> Value {
+    let id = json!({"type": "integer", "minimum": 1});
+    let color = json!({"type": "string", "description": "Fill colour, #rrggbb"});
+    let shape = json!({"type": "string", "enum": ["rounded", "rect", "ellipse", "pill"]});
+    let language = json!({"type": "string", "enum": ["en", "it"], "description": "Template language (default en)"});
+    let template_ids: Vec<&str> = templates::ALL.iter().map(|t| t.id).collect();
+    json!([
+        {"name": "list_templates", "description": "List the built-in templates (id, name, category, description).",
+         "inputSchema": {"type": "object", "properties": {"language": language}}},
+        {"name": "new_map", "description": "Start a new map, empty or from a template. Replaces the open map.",
+         "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "template": {"type": "string", "enum": template_ids}, "language": language}}},
+        {"name": "open_map", "description": "Open a file: an IdeaCraft map or an import (FreeMind/Freeplane .mm, XMind .xmind, CmapTools .cxl, OPML, Markdown, Mermaid).",
+         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+        {"name": "import_text", "description": "Replace the map with text in another format (Markdown outline, OPML, FreeMind XML, Mermaid mindmap/flowchart, CXL, XMind content.json). The format is detected when omitted.",
+         "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "format": {"type": "string", "enum": ["md", "opml", "mm", "mermaid", "cxl", "xmind", "ideacraft"]}}, "required": ["text"]}},
+        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .svg) unless given. Without path, saves where it was opened or last saved.",
+         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "format": {"type": "string", "enum": ["ideacraft", "markdown", "opml", "freemind", "svg"]}}}},
+        {"name": "get_map", "description": "Read the map: title, counts, an outline with each idea's [id], and the links. format=json returns the full IdeaCraft JSON (positions, colours).",
+         "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["outline", "json"]}}}},
+        {"name": "add_idea", "description": "Add one idea, optionally as a child of `parent`. Returns its id.",
+         "inputSchema": {"type": "object", "properties": {"label": {"type": "string"}, "parent": id, "color": color, "shape": shape}, "required": ["label"]}},
+        {"name": "add_ideas", "description": "Add several child ideas under `parent` (or as new roots without it). Returns their ids in order.",
+         "inputSchema": {"type": "object", "properties": {"parent": id, "labels": {"type": "array", "items": {"type": "string"}, "maxItems": 500}}, "required": ["labels"]}},
+        {"name": "update_idea", "description": "Change an idea: text, colour, shape, collapsed, or move it under another parent (null makes it a root).",
+         "inputSchema": {"type": "object", "properties": {"id": id, "label": {"type": "string"}, "color": color, "shape": shape, "collapsed": {"type": "boolean"}, "parent": {"type": ["integer", "null"]}}, "required": ["id"]}},
+        {"name": "delete_idea", "description": "Delete an idea with its whole branch and the links touching it.",
+         "inputSchema": {"type": "object", "properties": {"id": id}, "required": ["id"]}},
+        {"name": "link_ideas", "description": "Link two ideas with an optional label (the linking phrase of a concept map, e.g. \"causes\"). Returns the link id.",
+         "inputSchema": {"type": "object", "properties": {"from": id, "to": id, "label": {"type": "string"}}, "required": ["from", "to"]}},
+        {"name": "unlink", "description": "Delete a link by its id.",
+         "inputSchema": {"type": "object", "properties": {"id": id}, "required": ["id"]}},
+        {"name": "layout", "description": "Arrange the whole map: tree (left to right) or radial (rings around each root).",
+         "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["tree", "radial"]}}, "required": ["kind"]}},
+        {"name": "export", "description": "The map as text: markdown, opml, freemind (.mm XML), svg (a picture of the map) or ideacraft JSON.",
+         "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["markdown", "opml", "freemind", "svg", "ideacraft"]}}, "required": ["format"]}},
+        {"name": "list_commands", "description": "Every engine command with its parameters, for run_command.",
+         "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "run_command", "description": "Run any engine command by id (see list_commands), e.g. edit.undo, node.moveBy, selection.set.",
+         "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}}, "required": ["command"]}}
+    ])
+}
+
+fn str_arg<'a>(args: &'a Value, name: &str) -> Option<&'a str> {
+    args.get(name).and_then(Value::as_str)
+}
+
+fn id_arg(args: &Value, name: &str) -> Result<u64, String> {
+    args.get(name).and_then(Value::as_u64).ok_or_else(|| format!("`{name}` must be an idea id (a positive integer)"))
+}
+
+/// Outline with ids, then links: what an agent needs to keep editing.
+pub fn outline(map: &Map) -> String {
+    let mut out = format!("# {}\n{} ideas, {} links\n\n", map.title(), map.node_count(), map.edge_count());
+    let mut stack: Vec<(NodeId, usize)> = map.roots().into_iter().rev().map(|r| (r, 0)).collect();
+    let mut seen = 0usize;
+    while let Some((id, depth)) = stack.pop() {
+        seen += 1;
+        if seen > ideacraft_engine::core::limits::MAX_NODES {
+            break;
+        }
+        let Some(n) = map.node(id) else { continue };
+        let folded = if n.collapsed { " (collapsed)" } else { "" };
+        out.push_str(&format!("{}- [{}] {}{folded}\n", "  ".repeat(depth.min(64)), n.id.0, n.label.replace('\n', " ")));
+        for kid in map.children(id).into_iter().rev() {
+            stack.push((kid, depth + 1));
+        }
+    }
+    if map.edge_count() > 0 {
+        out.push_str("\nLinks:\n");
+        for e in map.edges() {
+            let label = if e.label.is_empty() { String::new() } else { format!(" \"{}\"", e.label) };
+            out.push_str(&format!("- link {}: [{}] → [{}]{label}\n", e.id.0, e.from.0, e.to.0));
+        }
+    }
+    out
+}
+
+impl Server {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn map(&self) -> &Map {
+        self.session.map()
+    }
+
+    fn exec(&mut self, command: &str, params: Value) -> ToolResult {
+        self.session.execute(command, &params).map_err(|e| format!("{command}: {e}"))
+    }
+
+    fn render(&self, format: &str) -> Result<String, String> {
+        let map = self.session.map();
+        Ok(match format {
+            "ideacraft" | "json" => map.to_json(),
+            "markdown" | "md" => formats::to_markdown(map),
+            "opml" => formats::to_opml(map),
+            "freemind" | "mm" => formats::to_freemind(map),
+            "svg" => formats::to_svg(map),
+            other => return Err(format!("unknown format {other:?}")),
+        })
+    }
+
+    /// Runs one tool.
+    pub fn call(&mut self, name: &str, args: &Value) -> ToolResult {
+        match name {
+            "list_templates" => {
+                let language = str_arg(args, "language").unwrap_or("en");
+                self.exec("map.templates", json!({"language": language}))
+            }
+            "new_map" => {
+                if let Some(t) = str_arg(args, "template") {
+                    self.exec("map.newFromTemplate", json!({"template": t, "language": str_arg(args, "language").unwrap_or("en")}))?;
+                    if let Some(title) = str_arg(args, "title") {
+                        self.exec("map.setTitle", json!({"title": title}))?;
+                        self.session.mark_saved();
+                    }
+                } else {
+                    self.exec("map.new", json!({"title": str_arg(args, "title").unwrap_or("Untitled map")}))?;
+                }
+                self.path = None;
+                Ok(json!({"outline": outline(self.map())}))
+            }
+            "open_map" => {
+                let path = str_arg(args, "path").ok_or("`path` is required")?;
+                let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+                let (map, format) = formats::import_bytes(path, &bytes).map_err(|e| format!("{path}: {e}"))?;
+                self.session.replace_map(map);
+                self.path = (format == formats::Format::IdeaCraft).then(|| path.to_string());
+                Ok(json!({"format": format.name(), "outline": outline(self.map())}))
+            }
+            "import_text" => {
+                let text = str_arg(args, "text").ok_or("`text` is required")?;
+                let mut params = json!({"text": text});
+                if let Some(f) = str_arg(args, "format") {
+                    params["format"] = json!(f);
+                }
+                let r = self.exec("map.importText", params)?;
+                self.path = None;
+                Ok(json!({"format": r["format"], "outline": outline(self.map())}))
+            }
+            "save_map" => {
+                let path =
+                    str_arg(args, "path").map(str::to_string).or_else(|| self.path.clone()).ok_or("`path` is required (the map was never saved)")?;
+                let lower = path.to_ascii_lowercase();
+                let format = str_arg(args, "format").map(str::to_string).unwrap_or_else(|| {
+                    let by_ext = [(".md", "markdown"), (".markdown", "markdown"), (".opml", "opml"), (".mm", "freemind"), (".svg", "svg")];
+                    by_ext.iter().find(|(e, _)| lower.ends_with(e)).map_or("ideacraft", |(_, f)| f).to_string()
+                });
+                let text = self.render(&format)?;
+                std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))?;
+                if format == "ideacraft" {
+                    self.session.mark_saved();
+                    self.path = Some(path.clone());
+                }
+                Ok(json!({"saved": path, "format": format}))
+            }
+            "get_map" => match str_arg(args, "format").unwrap_or("outline") {
+                "json" => Ok(json!({"json": self.map().to_json()})),
+                _ => Ok(json!({"outline": outline(self.map())})),
+            },
+            "add_idea" => {
+                let label = str_arg(args, "label").ok_or("`label` is required")?;
+                let mut params = json!({"label": label});
+                if args.get("parent").is_some_and(|p| !p.is_null()) {
+                    params["parent"] = json!(id_arg(args, "parent")?);
+                }
+                let id = self.exec("node.add", params)?["id"].as_u64().ok_or("no id returned")?;
+                self.style(id, args)?;
+                Ok(json!({"id": id}))
+            }
+            "add_ideas" => {
+                let labels = args.get("labels").and_then(Value::as_array).ok_or("`labels` must be a list of strings")?;
+                let parent = if args.get("parent").is_some_and(|p| !p.is_null()) { Some(id_arg(args, "parent")?) } else { None };
+                let mut ids = Vec::new();
+                for label in labels.iter().take(500) {
+                    let label = label.as_str().ok_or("`labels` must be a list of strings")?;
+                    let mut params = json!({"label": label});
+                    if let Some(p) = parent {
+                        params["parent"] = json!(p);
+                    }
+                    ids.push(self.exec("node.add", params)?["id"].clone());
+                }
+                Ok(json!({"ids": ids}))
+            }
+            "update_idea" => {
+                let id = id_arg(args, "id")?;
+                if let Some(label) = str_arg(args, "label") {
+                    self.exec("node.setLabel", json!({"id": id, "label": label}))?;
+                }
+                if let Some(c) = args.get("collapsed").and_then(Value::as_bool) {
+                    self.exec("node.toggleCollapse", json!({"id": id, "collapsed": c}))?;
+                }
+                if let Some(parent) = args.get("parent") {
+                    self.exec("node.setParent", json!({"id": id, "parent": parent}))?;
+                }
+                self.style(id, args)?;
+                Ok(json!({"id": id}))
+            }
+            "delete_idea" => self.exec("node.delete", json!({"id": id_arg(args, "id")?})),
+            "link_ideas" => self
+                .exec("edge.add", json!({"from": id_arg(args, "from")?, "to": id_arg(args, "to")?, "label": str_arg(args, "label").unwrap_or("")})),
+            "unlink" => self.exec("edge.delete", json!({"id": id_arg(args, "id")?})),
+            "layout" => match str_arg(args, "kind") {
+                Some("tree") => self.exec("layout.tree", json!({})),
+                Some("radial") => self.exec("layout.radial", json!({})),
+                _ => Err("`kind` must be tree or radial".into()),
+            },
+            "export" => {
+                let format = str_arg(args, "format").ok_or("`format` is required")?;
+                Ok(json!({"format": format, "text": self.render(format)?}))
+            }
+            "list_commands" => {
+                Ok(Value::Array(COMMANDS.iter().map(|c| json!({"id": c.id, "label": c.label, "params": c.params, "undoable": c.undoable})).collect()))
+            }
+            "run_command" => {
+                let command = str_arg(args, "command").ok_or("`command` is required")?;
+                let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
+                self.exec(command, params)
+            }
+            other => Err(format!("unknown tool {other:?}")),
+        }
+    }
+
+    fn style(&mut self, id: u64, args: &Value) -> Result<(), String> {
+        if let Some(c) = str_arg(args, "color") {
+            self.exec("node.setColor", json!({"id": id, "color": c}))?;
+        }
+        if let Some(s) = str_arg(args, "shape") {
+            self.exec("node.setShape", json!({"id": id, "shape": s}))?;
+        }
+        Ok(())
+    }
+
+    /// Handles one JSON-RPC message; `None` for notifications.
+    pub fn handle(&mut self, msg: &Value) -> Option<Value> {
+        let id = msg.get("id").cloned()?;
+        let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
+        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        let result = match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION),
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {"name": "ideacraft", "title": "IdeaCraft", "version": env!("CARGO_PKG_VERSION")},
+                "instructions": INSTRUCTIONS,
+            })),
+            "ping" => Ok(json!({})),
+            "tools/list" => Ok(json!({"tools": tools()})),
+            "tools/call" => {
+                let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
+                let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                Ok(match self.call(name, &args) {
+                    Ok(v) => {
+                        let text = match &v {
+                            Value::Object(o) if o.len() == 1 && o.values().all(Value::is_string) => {
+                                o.values().filter_map(Value::as_str).collect::<String>()
+                            }
+                            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+                        };
+                        let structured = if v.is_object() { v } else { json!({"result": v}) };
+                        json!({"content": [{"type": "text", "text": text}], "structuredContent": structured, "isError": false})
+                    }
+                    Err(e) => json!({"content": [{"type": "text", "text": e}], "isError": true}),
+                })
+            }
+            "resources/list" => Ok(json!({"resources": []})),
+            "prompts/list" => Ok(json!({"prompts": []})),
+            _ => Err((-32601, format!("method not found: {}", method.chars().take(64).collect::<String>()))),
+        };
+        Some(match result {
+            Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
+            Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
+        })
+    }
+
+    /// Serves until `input` ends: one JSON-RPC message per line in, one response per line out.
+    pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
+        for line in input.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let reply = if line.len() > MAX_LINE {
+                Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "request too large"}}))
+            } else {
+                match serde_json::from_str::<Value>(&line) {
+                    Ok(Value::Array(batch)) => {
+                        let replies: Vec<Value> = batch.iter().filter_map(|m| self.handle(m)).collect();
+                        (!replies.is_empty()).then_some(Value::Array(replies))
+                    }
+                    Ok(msg) => self.handle(&msg),
+                    Err(e) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}})),
+                }
+            };
+            if let Some(r) = reply {
+                writeln!(output, "{r}")?;
+                output.flush()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(s: &mut Server, name: &str, args: Value) -> Value {
+        let r = s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})).unwrap();
+        assert_eq!(r["result"]["isError"], false, "{name}: {r}");
+        r["result"]["structuredContent"].clone()
+    }
+
+    #[test]
+    fn handshake_and_tool_list() {
+        let mut s = Server::new();
+        let init = s.handle(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}})).unwrap();
+        assert_eq!(init["result"]["serverInfo"]["name"], "ideacraft");
+        assert!(s.handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none(), "notifications get no reply");
+        let list = s.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).unwrap();
+        let tools = list["result"]["tools"].as_array().unwrap();
+        assert!(tools.len() >= 15);
+        for t in tools {
+            assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
+            assert!(t["description"].as_str().is_some_and(|d| !d.is_empty()));
+        }
+        let missing = s.handle(&json!({"jsonrpc": "2.0", "id": 3, "method": "nope"})).unwrap();
+        assert_eq!(missing["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn an_agent_builds_a_concept_map() {
+        let mut s = Server::new();
+        call(&mut s, "new_map", json!({"title": "Photosynthesis"}));
+        let root = call(&mut s, "add_idea", json!({"label": "Photosynthesis", "shape": "pill", "color": "#ffe08a"}))["id"].as_u64().unwrap();
+        let ids = call(&mut s, "add_ideas", json!({"parent": root, "labels": ["Light", "Water", "Carbon dioxide", "Glucose"]}))["ids"].clone();
+        let (light, glucose) = (ids[0].as_u64().unwrap(), ids[3].as_u64().unwrap());
+        call(&mut s, "link_ideas", json!({"from": light, "to": glucose, "label": "powers the making of"}));
+        call(&mut s, "update_idea", json!({"id": glucose, "label": "Glucose (sugar)", "color": "#b1ecd8"}));
+        call(&mut s, "layout", json!({"kind": "radial"}));
+        let outline = call(&mut s, "get_map", json!({}))["outline"].as_str().unwrap().to_string();
+        assert!(outline.contains(&format!("- [{root}] Photosynthesis")), "{outline}");
+        assert!(outline.contains("  - ") && outline.contains("powers the making of"));
+        let svg = call(&mut s, "export", json!({"format": "svg"}))["text"].as_str().unwrap().to_string();
+        assert!(svg.contains("Glucose (sugar)"));
+        call(&mut s, "run_command", json!({"command": "edit.undo"}));
+        assert!(s.map().nodes().all(|n| n.label != "Glucose (sugar)") || s.map().node_count() == 5);
+
+        let dir = std::env::temp_dir().join(format!("ideacraft-mcp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("photo.ideacraft.json");
+        call(&mut s, "save_map", json!({"path": file.to_str().unwrap()}));
+        call(&mut s, "save_map", json!({"path": dir.join("photo.md").to_str().unwrap()}));
+        let mut t = Server::new();
+        let opened = call(&mut t, "open_map", json!({"path": dir.join("photo.md").to_str().unwrap()}));
+        assert!(opened["outline"].as_str().unwrap().contains("Carbon dioxide"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn templates_imports_and_errors() {
+        let mut s = Server::new();
+        let list = call(&mut s, "list_templates", json!({"language": "it"}));
+        assert!(list["result"].as_array().unwrap().iter().any(|t| t["name"] == "Analisi SWOT"));
+        call(&mut s, "new_map", json!({"template": "swot", "language": "it"}));
+        assert_eq!(s.map().title(), "Analisi SWOT");
+        let r = call(&mut s, "import_text", json!({"text": "mindmap\n  root((Trip))\n    Pack\n    Route"}));
+        assert_eq!(r["format"], "Mermaid");
+        assert_eq!(s.map().node_count(), 3);
+        for (name, args) in [
+            ("add_idea", json!({})),
+            ("delete_idea", json!({"id": 9999})),
+            ("link_ideas", json!({"from": "x"})),
+            ("layout", json!({"kind": "spiral"})),
+            ("open_map", json!({"path": "/definitely/not/here.mm"})),
+            ("save_map", json!({})),
+            ("nope", json!({})),
+        ] {
+            let r = s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})).unwrap();
+            assert_eq!(r["result"]["isError"], true, "{name} should fail cleanly: {r}");
+        }
+        assert_eq!(s.map().node_count(), 3, "failed tools change nothing");
+    }
+
+    #[test]
+    fn serve_speaks_line_delimited_json_rpc() {
+        let input = concat!(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
+            "not json\n",
+            "\n",
+            "[{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}]\n",
+        );
+        let mut out = Vec::new();
+        Server::new().serve(input.as_bytes(), &mut out).unwrap();
+        let lines: Vec<Value> = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["id"], 1);
+        assert_eq!(lines[1]["error"]["code"], -32700);
+        assert_eq!(lines[2][0]["id"], 2);
+    }
+}
