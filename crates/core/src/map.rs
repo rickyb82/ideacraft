@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::limits::{MAX_COORD, MAX_DEPTH, MAX_EDGES, MAX_LABEL_CHARS, MAX_NODES};
+use crate::limits::{MAX_COORD, MAX_DEPTH, MAX_EDGES, MAX_LABEL_CHARS, MAX_NODES, MAX_PROP_CHARS, MAX_PROPS, MAX_SIZE, MIN_SIZE};
 use crate::{Error, Result, Rgb};
 
 /// Current `.ideacraft.json` format version.
@@ -43,6 +43,25 @@ impl Point {
     }
 }
 
+/// A node's explicit size (diagram mode); without one a node fits its text.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Size {
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Size {
+    pub const fn new(w: f32, h: f32) -> Self {
+        Self { w, h }
+    }
+
+    /// Finite and inside [`MIN_SIZE`]..=[`MAX_SIZE`].
+    pub fn clamped(self) -> Self {
+        let c = |v: f32| if v.is_finite() { v.clamp(MIN_SIZE, MAX_SIZE) } else { MIN_SIZE };
+        Self { w: c(self.w), h: c(self.h) }
+    }
+}
+
 /// How a node is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,10 +71,38 @@ pub enum Shape {
     Rect,
     Ellipse,
     Pill,
+    Diamond,
+    Hexagon,
+    Parallelogram,
+    Cylinder,
+    Document,
+    Note,
+    Cloud,
+    /// A rectangle with double side bars (predefined process).
+    Subprocess,
+    /// Text only, no outline or fill.
+    Text,
+    /// A large, light box drawn behind other shapes (a zone, a swimlane, a site).
+    Container,
 }
 
 impl Shape {
-    pub const ALL: [Self; 4] = [Self::Rounded, Self::Rect, Self::Ellipse, Self::Pill];
+    pub const ALL: [Self; 14] = [
+        Self::Rounded,
+        Self::Rect,
+        Self::Ellipse,
+        Self::Pill,
+        Self::Diamond,
+        Self::Hexagon,
+        Self::Parallelogram,
+        Self::Cylinder,
+        Self::Document,
+        Self::Note,
+        Self::Cloud,
+        Self::Subprocess,
+        Self::Text,
+        Self::Container,
+    ];
 
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim()))
@@ -67,6 +114,234 @@ impl Shape {
             Self::Rect => "rect",
             Self::Ellipse => "ellipse",
             Self::Pill => "pill",
+            Self::Diamond => "diamond",
+            Self::Hexagon => "hexagon",
+            Self::Parallelogram => "parallelogram",
+            Self::Cylinder => "cylinder",
+            Self::Document => "document",
+            Self::Note => "note",
+            Self::Cloud => "cloud",
+            Self::Subprocess => "subprocess",
+            Self::Text => "text",
+            Self::Container => "container",
+        }
+    }
+
+    /// Drawn behind everything else and never auto-sized.
+    pub const fn is_container(self) -> bool {
+        matches!(self, Self::Container)
+    }
+
+    /// The outline as a polygon around the centre, for a box of `w`×`h`; `None` for shapes
+    /// drawn from rectangles and ellipses (rounded, rect, pill, ellipse, text, container).
+    pub fn polygon(self, w: f32, h: f32) -> Option<Vec<Point>> {
+        let (hw, hh) = (w / 2.0, h / 2.0);
+        let pt = |x: f32, y: f32| Point::new(x, y);
+        Some(match self {
+            Self::Diamond => vec![pt(0.0, -hh), pt(hw, 0.0), pt(0.0, hh), pt(-hw, 0.0)],
+            Self::Hexagon => {
+                let k = hw.min(h * 0.4);
+                vec![pt(-hw + k, -hh), pt(hw - k, -hh), pt(hw, 0.0), pt(hw - k, hh), pt(-hw + k, hh), pt(-hw, 0.0)]
+            }
+            Self::Parallelogram => {
+                let k = (w * 0.18).min(hw);
+                vec![pt(-hw + k, -hh), pt(hw, -hh), pt(hw - k, hh), pt(-hw, hh)]
+            }
+            Self::Document => {
+                let mut v = vec![pt(-hw, -hh), pt(hw, -hh), pt(hw, hh - h * 0.12)];
+                for i in 0..=16 {
+                    let t = i as f32 / 16.0;
+                    let x = hw - t * w;
+                    let y = hh - h * 0.12 + (t * std::f32::consts::TAU).sin() * h * 0.08;
+                    v.push(pt(x, y));
+                }
+                v
+            }
+            Self::Note => {
+                let k = (w.min(h) * 0.2).min(24.0);
+                vec![pt(-hw, -hh), pt(hw - k, -hh), pt(hw, -hh + k), pt(hw, hh), pt(-hw, hh)]
+            }
+            Self::Cylinder => {
+                let cap = (h * 0.14).min(hw);
+                let mut v = Vec::new();
+                for i in 0..=16 {
+                    let a = std::f32::consts::PI + std::f32::consts::PI * i as f32 / 16.0;
+                    v.push(pt(hw * a.cos(), -hh + cap + cap * a.sin()));
+                }
+                for i in 0..=16 {
+                    let a = std::f32::consts::PI * i as f32 / 16.0;
+                    v.push(pt(hw * a.cos(), hh - cap + cap * a.sin()));
+                }
+                v
+            }
+            Self::Cloud => {
+                let mut v = Vec::new();
+                for i in 0..48 {
+                    let a = std::f32::consts::TAU * i as f32 / 48.0;
+                    let bump = 0.86 + 0.14 * (a * 7.0).cos().abs();
+                    v.push(pt(hw * bump * a.cos(), hh * bump * a.sin()));
+                }
+                v
+            }
+            Self::Rounded | Self::Rect | Self::Ellipse | Self::Pill | Self::Subprocess | Self::Text | Self::Container => return None,
+        })
+    }
+
+    /// Extra strokes drawn inside the outline (the cylinder's inner cap, the subprocess bars, the
+    /// note's fold), as polylines around the centre.
+    pub fn inner_strokes(self, w: f32, h: f32) -> Vec<Vec<Point>> {
+        let (hw, hh) = (w / 2.0, h / 2.0);
+        let pt = |x: f32, y: f32| Point::new(x, y);
+        match self {
+            Self::Cylinder => {
+                let cap = (h * 0.14).min(hw);
+                let line = (0..=16)
+                    .map(|i| {
+                        let a = std::f32::consts::PI * i as f32 / 16.0;
+                        pt(hw * a.cos(), -hh + cap + cap * a.sin())
+                    })
+                    .collect();
+                vec![line]
+            }
+            Self::Subprocess => {
+                let k = (w * 0.08).min(12.0);
+                vec![vec![pt(-hw + k, -hh), pt(-hw + k, hh)], vec![pt(hw - k, -hh), pt(hw - k, hh)]]
+            }
+            Self::Note => {
+                let k = (w.min(h) * 0.2).min(24.0);
+                vec![vec![pt(hw - k, -hh), pt(hw - k, -hh + k), pt(hw, -hh + k)]]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// How a link is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+/// Arrowheads on a link.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Arrows {
+    #[default]
+    End,
+    None,
+    Start,
+    Both,
+}
+
+/// How a link finds its way between two nodes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Route {
+    #[default]
+    Straight,
+    Orthogonal,
+    Curved,
+}
+
+/// A link's look. The default (solid, end arrow, straight, inherited colour) is not written.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EdgeStyle {
+    #[serde(default)]
+    pub line: LineStyle,
+    #[serde(default)]
+    pub arrows: Arrows,
+    #[serde(default)]
+    pub route: Route,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgb>,
+    /// Stroke width; 0 means the default.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub width: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_default_style(s: &EdgeStyle) -> bool {
+    *s == EdgeStyle::default()
+}
+
+impl EdgeStyle {
+    pub fn clamped(mut self) -> Self {
+        self.width = if self.width.is_finite() { self.width.clamp(0.0, 12.0) } else { 0.0 };
+        self
+    }
+}
+
+impl LineStyle {
+    pub const ALL: [Self; 3] = [Self::Solid, Self::Dashed, Self::Dotted];
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim()))
+    }
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Solid => "solid",
+            Self::Dashed => "dashed",
+            Self::Dotted => "dotted",
+        }
+    }
+}
+
+impl Arrows {
+    pub const ALL: [Self; 4] = [Self::None, Self::End, Self::Start, Self::Both];
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim()))
+    }
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::End => "end",
+            Self::Start => "start",
+            Self::Both => "both",
+        }
+    }
+}
+
+impl Route {
+    pub const ALL: [Self; 3] = [Self::Straight, Self::Orthogonal, Self::Curved];
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim()))
+    }
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Straight => "straight",
+            Self::Orthogonal => "orthogonal",
+            Self::Curved => "curved",
+        }
+    }
+}
+
+/// What a map is: a mind/concept map (tree-first) or a free diagram (shapes and connectors).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    #[default]
+    Map,
+    Diagram,
+}
+
+impl Mode {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "map" => Some(Self::Map),
+            "diagram" => Some(Self::Diagram),
+            _ => None,
+        }
+    }
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Map => "map",
+            Self::Diagram => "diagram",
         }
     }
 }
@@ -87,6 +362,49 @@ pub struct Node {
     /// Children (and everything under them) are hidden.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collapsed: bool,
+    /// Stencil id (`net.router`…), which gives the node its icon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Explicit size; without one the node fits its text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Size>,
+    /// Free properties (IP address, VLAN, owner, status…).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub props: BTreeMap<String, String>,
+    /// Drawing order: higher is in front; equal z draws in id order.
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub z: i32,
+}
+
+fn is_zero_i32(v: &i32) -> bool {
+    *v == 0
+}
+
+impl Node {
+    /// The node's rectangle half-size when it has an explicit size.
+    pub fn half_size(&self) -> Option<(f32, f32)> {
+        self.size.map(|s| (s.w / 2.0, s.h / 2.0))
+    }
+
+    /// `status` property mapped to a traffic light: up/ok/online → green, warning/degraded →
+    /// amber, down/offline/error → red.
+    pub fn status_light(&self) -> Option<Status> {
+        let s = self.props.get("status")?.trim().to_ascii_lowercase();
+        match s.as_str() {
+            "up" | "ok" | "online" | "active" | "running" | "done" | "attivo" | "online " => Some(Status::Up),
+            "warning" | "warn" | "degraded" | "slow" | "attenzione" => Some(Status::Warning),
+            "down" | "offline" | "error" | "failed" | "ko" | "inattivo" | "guasto" => Some(Status::Down),
+            _ => None,
+        }
+    }
+}
+
+/// A node's health, from its `status` property.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Up,
+    Warning,
+    Down,
 }
 
 /// A free, optionally labelled link between two concepts ("causes", "is part of"…).
@@ -97,12 +415,15 @@ pub struct Edge {
     pub to: NodeId,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
+    #[serde(default, skip_serializing_if = "is_default_style")]
+    pub style: EdgeStyle,
 }
 
 /// A concept map.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Map {
     title: String,
+    mode: Mode,
     nodes: BTreeMap<NodeId, Node>,
     edges: BTreeMap<EdgeId, Edge>,
     next_id: u64,
@@ -120,6 +441,8 @@ struct File {
     format: String,
     version: u32,
     title: String,
+    #[serde(default)]
+    mode: Mode,
     /// Next free id, so ids of deleted ideas are never reused.
     #[serde(default, rename = "nextId")]
     next_id: u64,
@@ -133,9 +456,18 @@ fn clean_label(label: &str) -> String {
     label.chars().filter(|c| *c == '\n' || !c.is_control()).take(MAX_LABEL_CHARS).collect()
 }
 
+fn clean_prop(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).take(MAX_PROP_CHARS).collect::<String>().trim().to_string()
+}
+
+fn clean_kind(kind: &str) -> Option<String> {
+    let k: String = kind.trim().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_').take(64).collect();
+    (!k.is_empty()).then_some(k)
+}
+
 impl Map {
     pub fn new(title: &str) -> Self {
-        Self { title: clean_label(title), nodes: BTreeMap::new(), edges: BTreeMap::new(), next_id: 1 }
+        Self { title: clean_label(title), mode: Mode::Map, nodes: BTreeMap::new(), edges: BTreeMap::new(), next_id: 1 }
     }
 
     /// A small built-in example (original content), used by `--sample` and tests.
@@ -182,6 +514,21 @@ impl Map {
 
     pub fn set_title(&mut self, title: &str) {
         self.title = clean_label(title);
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
+    /// Nodes in drawing order: containers first, then by `z`, then by id.
+    pub fn nodes_in_draw_order(&self) -> Vec<&Node> {
+        let mut v: Vec<&Node> = self.nodes.values().collect();
+        v.sort_by_key(|n| (!n.shape.is_container(), n.z, n.id));
+        v
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
@@ -237,8 +584,104 @@ impl Map {
             Some(p) => p.color,
             None => Rgb::default(),
         };
-        self.nodes.insert(id, Node { id, label: clean_label(label), pos: pos.clamped(), parent, color, shape: Shape::default(), collapsed: false });
+        self.nodes.insert(
+            id,
+            Node {
+                id,
+                label: clean_label(label),
+                pos: pos.clamped(),
+                parent,
+                color,
+                shape: Shape::default(),
+                collapsed: false,
+                kind: None,
+                size: None,
+                props: BTreeMap::new(),
+                z: 0,
+            },
+        );
         Ok(id)
+    }
+
+    /// Adds a shape from a stencil: its shape, size, colour and kind. Without a label the
+    /// stencil's name is used.
+    pub fn add_stencil(&mut self, stencil: &crate::stencil::Stencil, label: Option<&str>, pos: Point) -> Result<NodeId> {
+        let id = self.add_node(label.unwrap_or(stencil.name), pos, None)?;
+        if let Some(n) = self.nodes.get_mut(&id) {
+            n.shape = stencil.shape;
+            n.size = Some(stencil.size);
+            n.color = stencil.color;
+            n.kind = (!stencil.glyph.is_empty()).then(|| stencil.id.to_string());
+            if stencil.shape.is_container() {
+                n.z = -1;
+            }
+        }
+        Ok(id)
+    }
+
+    /// Copies a node (not its branch) with a new id, offset by `(dx, dy)`.
+    pub fn duplicate_node(&mut self, id: NodeId, dx: f32, dy: f32) -> Result<NodeId> {
+        let src = self.node(id).ok_or(Error::NoNode(id.0))?.clone();
+        if self.nodes.len() >= MAX_NODES {
+            return Err(Error::Full("nodes"));
+        }
+        let new = NodeId(self.fresh_id()?);
+        let mut n = src;
+        n.id = new;
+        n.pos = Point::new(n.pos.x + dx, n.pos.y + dy).clamped();
+        n.collapsed = false;
+        self.nodes.insert(new, n);
+        Ok(new)
+    }
+
+    pub fn set_kind(&mut self, id: NodeId, kind: Option<&str>) -> Result<()> {
+        self.node_mut(id)?.kind = kind.and_then(clean_kind);
+        Ok(())
+    }
+
+    pub fn set_size(&mut self, id: NodeId, size: Option<Size>) -> Result<()> {
+        self.node_mut(id)?.size = size.map(Size::clamped);
+        Ok(())
+    }
+
+    pub fn set_z(&mut self, id: NodeId, z: i32) -> Result<()> {
+        self.node_mut(id)?.z = z.clamp(-1_000, 1_000);
+        Ok(())
+    }
+
+    /// Sets a property; an empty value removes it. At most [`MAX_PROPS`] per node.
+    pub fn set_prop(&mut self, id: NodeId, key: &str, value: &str) -> Result<()> {
+        let key = clean_prop(key);
+        let value = clean_prop(value);
+        let n = self.node_mut(id)?;
+        if key.is_empty() {
+            return Err(Error::Format("a property needs a name".into()));
+        }
+        if value.is_empty() {
+            n.props.remove(&key);
+        } else {
+            if !n.props.contains_key(&key) && n.props.len() >= MAX_PROPS {
+                return Err(Error::Full("properties"));
+            }
+            n.props.insert(key, value);
+        }
+        Ok(())
+    }
+
+    pub fn set_edge_style(&mut self, id: EdgeId, style: EdgeStyle) -> Result<()> {
+        self.edges.get_mut(&id).ok_or(Error::NoEdge(id.0))?.style = style.clamped();
+        Ok(())
+    }
+
+    /// The top-most node whose box contains `p` (explicit sizes only; text-fitted nodes are hit
+    /// by the UI, which knows their text size).
+    pub fn node_at(&self, p: Point) -> Option<NodeId> {
+        self.nodes_in_draw_order()
+            .into_iter()
+            .rev()
+            .filter(|n| self.is_visible(n.id))
+            .find(|n| n.half_size().is_some_and(|(hw, hh)| (p.x - n.pos.x).abs() <= hw && (p.y - n.pos.y).abs() <= hh))
+            .map(|n| n.id)
     }
 
     /// Removes a node with its whole branch and every link touching them; returns the removed ids.
@@ -306,7 +749,7 @@ impl Map {
             return Err(Error::Full("links"));
         }
         let id = EdgeId(self.fresh_id()?);
-        self.edges.insert(id, Edge { id, from, to, label: clean_label(label) });
+        self.edges.insert(id, Edge { id, from, to, label: clean_label(label), style: EdgeStyle::default() });
         Ok(id)
     }
 
@@ -380,6 +823,7 @@ impl Map {
             format: "ideacraft".into(),
             version: FORMAT_VERSION,
             title: self.title.clone(),
+            mode: self.mode,
             next_id: self.next_id,
             nodes: self.nodes.values().cloned().collect(),
             edges: self.edges.values().cloned().collect(),
@@ -398,6 +842,7 @@ impl Map {
             return Err(Error::Format(format!("made by a newer IdeaCraft (format {})", file.version)));
         }
         let mut map = Self::new(&file.title);
+        map.mode = file.mode;
         let file_next = file.next_id;
         let mut max_id = 0u64;
         for mut n in file.nodes.into_iter().take(MAX_NODES) {
@@ -406,6 +851,11 @@ impl Map {
             }
             n.label = clean_label(&n.label);
             n.pos = n.pos.clamped();
+            n.size = n.size.map(Size::clamped);
+            n.kind = n.kind.as_deref().and_then(clean_kind);
+            n.z = n.z.clamp(-1_000, 1_000);
+            n.props =
+                n.props.iter().map(|(k, v)| (clean_prop(k), clean_prop(v))).filter(|(k, v)| !k.is_empty() && !v.is_empty()).take(MAX_PROPS).collect();
             max_id = max_id.max(n.id.0);
             map.nodes.insert(n.id, n);
         }
@@ -445,6 +895,7 @@ impl Map {
                 continue;
             }
             e.label = clean_label(&e.label);
+            e.style = e.style.clamped();
             max_id = max_id.max(e.id.0);
             map.edges.insert(e.id, e);
         }
@@ -504,6 +955,53 @@ mod tests {
         assert!(Map::from_json("{").is_err());
         assert!(Map::from_json(r#"{"format":"other","version":1,"title":""}"#).is_err());
         assert!(Map::from_json(r#"{"format":"ideacraft","version":99,"title":""}"#).is_err());
+    }
+
+    #[test]
+    fn diagram_fields_round_trip_and_stay_bounded() {
+        let mut m = Map::new("net");
+        m.set_mode(Mode::Diagram);
+        let router = crate::stencil::find("net.router").unwrap();
+        let r = m.add_stencil(router, Some("Core router"), Point::new(10.0, 10.0)).unwrap();
+        let n = m.node(r).unwrap();
+        assert_eq!((n.kind.as_deref(), n.size, n.shape), (Some("net.router"), Some(router.size), Shape::Rounded));
+        m.set_prop(r, " IP ", "10.0.0.1").unwrap();
+        m.set_prop(r, "status", "down").unwrap();
+        assert_eq!(m.node(r).unwrap().status_light(), Some(Status::Down));
+        m.set_prop(r, "status", "").unwrap();
+        assert!(!m.node(r).unwrap().props.contains_key("status"));
+        assert!(m.set_prop(r, "", "x").is_err());
+        for i in 0..MAX_PROPS + 5 {
+            let _ = m.set_prop(r, &format!("k{i}"), "v");
+        }
+        assert_eq!(m.node(r).unwrap().props.len(), MAX_PROPS);
+        m.set_size(r, Some(Size::new(f32::NAN, 1e9))).unwrap();
+        assert_eq!(m.node(r).unwrap().size, Some(Size::new(MIN_SIZE, MAX_SIZE)));
+        assert_eq!(m.node_at(Point::new(10.0, 10.0)), Some(r));
+        assert_eq!(m.node_at(Point::new(5000.0, 10.0)), None);
+        let pc = m.add_stencil(crate::stencil::find("net.pc").unwrap(), None, Point::new(300.0, 10.0)).unwrap();
+        assert_eq!(m.node(pc).unwrap().label, "Workstation");
+        let e = m.connect(r, pc, "1 Gbit").unwrap();
+        m.set_edge_style(e, EdgeStyle { line: LineStyle::Dashed, arrows: Arrows::Both, route: Route::Orthogonal, color: None, width: 99.0 }).unwrap();
+        assert_eq!(m.edge(e).unwrap().style.width, 12.0);
+        let copy = m.duplicate_node(r, 20.0, 0.0).unwrap();
+        assert_eq!(m.node(copy).unwrap().kind.as_deref(), Some("net.router"));
+        assert_eq!(m.node(copy).unwrap().pos.x, 30.0);
+        let back = Map::from_json(&m.to_json()).unwrap();
+        assert_eq!(back, m);
+        assert_eq!(back.mode(), Mode::Diagram);
+        // Old files (no mode, size, kind, props, style) still read, and a hostile size is clamped.
+        let old = r#"{"format":"ideacraft","version":1,"title":"t","nodes":[{"id":1,"label":"a","pos":{"x":0,"y":0},"size":{"w":-5,"h":"nan"}}]}"#;
+        assert!(Map::from_json(old).is_err() || Map::from_json(old).is_ok());
+        let old = r#"{"format":"ideacraft","version":1,"title":"t","nodes":[{"id":1,"label":"a","pos":{"x":0,"y":0},"size":{"w":-5,"h":1e9},"z":99999,"props":{"":"x","ip":"1.2.3.4"}}],"edges":[]}"#;
+        let m = Map::from_json(old).unwrap();
+        let n = m.node(NodeId(1)).unwrap();
+        assert_eq!((n.size, n.z, n.props.len()), (Some(Size::new(MIN_SIZE, MAX_SIZE)), 1_000, 1));
+        for s in Shape::ALL {
+            let _ = s.polygon(100.0, 60.0);
+            let _ = s.inner_strokes(100.0, 60.0);
+            assert_eq!(Shape::parse(s.name()), Some(s));
+        }
     }
 
     #[test]

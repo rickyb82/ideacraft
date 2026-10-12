@@ -2,15 +2,17 @@
 //! (layer L2: depends only on `ideacraft-core`).
 //!
 //! Import: FreeMind / Freeplane (`.mm`), XMind (`.xmind`, both the current JSON and the legacy XML
-//! layout), CmapTools (`.cxl`), OPML (`.opml`), Markdown / indented outlines (`.md`, `.txt`) and
-//! Mermaid (`mindmap` and simple `flowchart`/`graph`). Formats are read from their public
+//! layout), CmapTools (`.cxl`), OPML (`.opml`), Markdown / indented outlines (`.md`, `.txt`),
+//! Mermaid (`mindmap` and simple `flowchart`/`graph`) and draw.io / diagrams.net (`.drawio`). Formats are read from their public
 //! descriptions and our own test files; no third-party code is used.
 //!
-//! Export: Markdown outline, OPML, FreeMind `.mm` and SVG, so maps travel to other tools.
+//! Export: Markdown outline, OPML, FreeMind `.mm`, draw.io and SVG, so maps travel to other tools.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod build;
 mod cxl;
+pub mod diagrams;
+mod drawio;
 mod export;
 mod freemind;
 mod markdown;
@@ -21,9 +23,10 @@ pub mod templates;
 mod xmind;
 mod xml;
 
+pub use drawio::{export as to_drawio, import as from_drawio};
 pub use export::{to_freemind, to_markdown, to_opml};
 use ideacraft_core::Map;
-pub use svg::to_svg;
+pub use svg::{measure, to_svg};
 
 /// Largest file read, in bytes.
 pub const MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -48,10 +51,11 @@ pub enum Format {
     Opml,
     Markdown,
     Mermaid,
+    DrawIo,
 }
 
 impl Format {
-    pub const ALL: [Self; 7] = [Self::IdeaCraft, Self::FreeMind, Self::XMind, Self::Cxl, Self::Opml, Self::Markdown, Self::Mermaid];
+    pub const ALL: [Self; 8] = [Self::IdeaCraft, Self::FreeMind, Self::XMind, Self::Cxl, Self::Opml, Self::Markdown, Self::Mermaid, Self::DrawIo];
 
     pub const fn name(self) -> &'static str {
         match self {
@@ -62,6 +66,7 @@ impl Format {
             Self::Opml => "OPML",
             Self::Markdown => "Markdown / text outline",
             Self::Mermaid => "Mermaid",
+            Self::DrawIo => "draw.io / diagrams.net",
         }
     }
 
@@ -75,6 +80,7 @@ impl Format {
             Self::Opml => &["opml"],
             Self::Markdown => &["md", "markdown", "txt"],
             Self::Mermaid => &["mmd", "mermaid"],
+            Self::DrawIo => &["drawio", "dio"],
         }
     }
 
@@ -117,6 +123,9 @@ pub fn sniff(text: &str) -> Format {
         if head.contains("<opml") {
             return Format::Opml;
         }
+        if head.contains("<mxfile") || head.contains("<mxgraphmodel") {
+            return Format::DrawIo;
+        }
         if head.contains("<cmap") {
             return Format::Cxl;
         }
@@ -142,6 +151,7 @@ pub fn import_text(text: &str, format: Format) -> Result<Map> {
         Format::Opml => opml::import(text),
         Format::Markdown => markdown::import(text),
         Format::Mermaid => mermaid::import(text),
+        Format::DrawIo => drawio::import(text),
     }
 }
 
@@ -168,6 +178,8 @@ mod tests {
         assert_eq!(sniff("<map version=\"1.0.1\"><node TEXT=\"a\"/></map>"), Format::FreeMind);
         assert_eq!(sniff("<cmap xmlns=\"http://cmap.ihmc.us/xml/cmap/\">"), Format::Cxl);
         assert_eq!(sniff("mindmap\n  root((x))"), Format::Mermaid);
+        assert_eq!(sniff("<mxfile host=\"x\"><diagram/></mxfile>"), Format::DrawIo);
+        assert_eq!(Format::parse("drawio"), Some(Format::DrawIo));
         assert_eq!(sniff("# Title\n- a"), Format::Markdown);
         assert_eq!(sniff("[{\"rootTopic\":{}}]"), Format::XMind);
         assert_eq!(Format::parse("mm"), Some(Format::FreeMind));
@@ -182,7 +194,7 @@ mod tests {
     fn hostile_input_never_panics() {
         let samples: [&[u8]; 9] = [b"", b"<", b"<map><node", b"[", b"{", b"mindmap\n\t\t\t((", b"PK", b"\xff\xfe\x00", b"graph TD\n-->|x|"];
         for bytes in samples {
-            for name in ["a.mm", "a.xmind", "a.cxl", "a.opml", "a.md", "a.mmd", "a.json", "a"] {
+            for name in ["a.mm", "a.xmind", "a.cxl", "a.opml", "a.md", "a.mmd", "a.json", "a.drawio", "a"] {
                 let _ = import_bytes(name, bytes);
             }
         }

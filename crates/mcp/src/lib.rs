@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, Write};
 
-use ideacraft_engine::core::{Map, NodeId};
+use ideacraft_engine::core::{Map, NodeId, stencil};
 use ideacraft_engine::formats::{self, templates};
 use ideacraft_engine::{COMMANDS, Session};
 use serde_json::{Value, json};
@@ -23,7 +23,10 @@ pub const MAP_JSON_URI: &str = "ideacraft://map.json";
 /// Longest request line read (bytes); longer lines are answered with an error.
 const MAX_LINE: usize = 32 * 1024 * 1024;
 
-const INSTRUCTIONS: &str = "IdeaCraft edits one concept map at a time. Start with new_map (optionally from a template) or open_map, then add ideas \
+const INSTRUCTIONS: &str = "IdeaCraft edits one map at a time: a mind/concept map (ideas in a tree plus labelled links) or, in diagram mode, a free diagram \
+(network diagrams, flowcharts, architectures) made of stencil shapes (list_stencils: routers, switches, servers, clouds, flowchart symbols…) with sizes, \
+properties (ip, vlan, status…) and styled connectors (style_link: orthogonal/dashed/arrows). Use add_shape for diagrams, add_idea/add_ideas for maps, \
+align to tidy shapes, export drawio to hand the result to draw.io/Visio and svg to look at it. IdeaCraft edits one concept map at a time. Start with new_map (optionally from a template) or open_map, then add ideas \
 with add_idea/add_ideas (children hang under a parent id), connect any two ideas with link_ideas (a labelled concept-map link), \
 rearrange with layout, and read the result with get_map (an outline with ids) or export (svg to look at it). Save with save_map. \
 run_command reaches every engine command (list_commands), including edit.undo and edit.redo.";
@@ -47,6 +50,7 @@ fn format_for_path(path: &str) -> Option<&'static str> {
         (".opml", "opml"),
         (".mm", "freemind"),
         (".svg", "svg"),
+        (".drawio", "drawio"),
     ];
     by_ext.iter().find(|(e, _)| lower.ends_with(e)).map(|(_, f)| *f)
 }
@@ -68,8 +72,8 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
         {"name": "import_text", "description": "Replace the map with text in another format (Markdown outline, OPML, FreeMind XML, Mermaid mindmap/flowchart, CXL, XMind content.json). The format is detected when omitted.",
          "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "format": {"type": "string", "enum": ["md", "opml", "mm", "mermaid", "cxl", "xmind", "ideacraft"]}}, "required": ["text"]}},
-        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .svg) unless given. Without path, saves back to the file it was opened from (a .mm stays FreeMind, an .opml stays OPML) or last saved to.",
-         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "format": {"type": "string", "enum": ["ideacraft", "markdown", "opml", "freemind", "svg"]}}}},
+        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .drawio, .svg) unless given. Without path, saves back to the file it was opened from (a .mm stays FreeMind, an .opml stays OPML) or last saved to.",
+         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "format": {"type": "string", "enum": ["ideacraft", "markdown", "opml", "freemind", "drawio", "svg"]}}}},
         {"name": "get_map", "description": "Read the map: title, counts, an outline with each idea's [id], and the links. format=json returns the full IdeaCraft JSON (positions, colours).",
          "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["outline", "json"]}}}},
         {"name": "add_idea", "description": "Add one idea, optionally as a child of `parent`. Returns its id.",
@@ -86,8 +90,21 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"id": id}, "required": ["id"]}},
         {"name": "layout", "description": "Arrange the whole map: tree (left to right) or radial (rings around each root).",
          "inputSchema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["tree", "radial"]}}, "required": ["kind"]}},
-        {"name": "export", "description": "The map as text: markdown, opml, freemind (.mm XML), svg (a picture of the map) or ideacraft JSON.",
-         "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["markdown", "opml", "freemind", "svg", "ideacraft"]}}, "required": ["format"]}},
+        {"name": "export", "description": "The map as text: markdown, opml, freemind (.mm XML), drawio (for draw.io / Visio), svg (a picture of the map) or ideacraft JSON.",
+         "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["markdown", "opml", "freemind", "drawio", "svg", "ideacraft"]}}, "required": ["format"]}},
+        {"name": "list_stencils", "description": "The shape library for diagrams: id, name, category (basic shapes, flowchart, network, cloud & servers, people & places), shape and default size.",
+         "inputSchema": {"type": "object", "properties": {"language": language, "category": {"type": "string", "description": "Filter: basic, flowchart, network, cloud, people"}}}},
+        {"name": "add_shape", "description": "Add a diagram shape from a stencil (see list_stencils), e.g. net.router, flow.decision, basic.container. Positions are map units (centre); shapes are about 110×90. Switches the map to diagram mode. Returns the id.",
+         "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}, "label": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
+             "props": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Properties such as ip, vlan, model, owner, status (up|warning|down shows a light)"}}, "required": ["kind"]}},
+        {"name": "style_link", "description": "Style a link: line solid|dashed|dotted, arrows none|end|start|both, route straight|orthogonal|curved, colour #rrggbb (null for default), width in px, and a new label.",
+         "inputSchema": {"type": "object", "properties": {"id": id, "line": {"type": "string", "enum": ["solid", "dashed", "dotted"]}, "arrows": {"type": "string", "enum": ["none", "end", "start", "both"]},
+             "route": {"type": "string", "enum": ["straight", "orthogonal", "curved"]}, "color": {"type": ["string", "null"]}, "width": {"type": "number"}, "label": {"type": "string"}}, "required": ["id"]}},
+        {"name": "align", "description": "Tidy shapes: align several ids on an edge (left|right|top|bottom|centerX|centerY), distribute them along x or y, or snap them to the grid.",
+         "inputSchema": {"type": "object", "properties": {"ids": {"type": "array", "items": id}, "edge": {"type": "string", "enum": ["left", "right", "top", "bottom", "centerX", "centerY"]},
+             "distribute": {"type": "string", "enum": ["x", "y"]}, "snap": {"type": "boolean"}}, "required": ["ids"]}},
+        {"name": "set_mode", "description": "Switch the map between mind-map mode (tree layouts, concept links) and diagram mode (free shapes, snapping, styled connectors).",
+         "inputSchema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["map", "diagram"]}}, "required": ["mode"]}},
         {"name": "list_commands", "description": "Every engine command with its parameters, for run_command.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "run_command", "description": "Run any engine command by id (see list_commands), e.g. edit.undo, node.moveBy, selection.set.",
@@ -115,7 +132,21 @@ pub fn outline(map: &Map) -> String {
         }
         let Some(n) = map.node(id) else { continue };
         let folded = if n.collapsed { " (collapsed)" } else { "" };
-        out.push_str(&format!("{}- [{}] {}{folded}\n", "  ".repeat(depth.min(64)), n.id.0, n.label.replace('\n', " ")));
+        let mut extra = Vec::new();
+        if let Some(k) = &n.kind {
+            extra.push(k.clone());
+        }
+        if n.shape != ideacraft_engine::core::Shape::Rounded {
+            extra.push(n.shape.name().to_string());
+        }
+        if let Some(s) = n.size {
+            extra.push(format!("{:.0}×{:.0} at ({:.0}, {:.0})", s.w, s.h, n.pos.x, n.pos.y));
+        }
+        for (k, v) in &n.props {
+            extra.push(format!("{k}={v}"));
+        }
+        let extra = if extra.is_empty() { String::new() } else { format!(" {{{}}}", extra.join(", ")) };
+        out.push_str(&format!("{}- [{}] {}{folded}{extra}\n", "  ".repeat(depth.min(64)), n.id.0, n.label.replace('\n', " ")));
         for kid in map.children(id).into_iter().rev() {
             stack.push((kid, depth + 1));
         }
@@ -124,7 +155,13 @@ pub fn outline(map: &Map) -> String {
         out.push_str("\nLinks:\n");
         for e in map.edges() {
             let label = if e.label.is_empty() { String::new() } else { format!(" \"{}\"", e.label) };
-            out.push_str(&format!("- link {}: [{}] → [{}]{label}\n", e.id.0, e.from.0, e.to.0));
+            let st = e.style;
+            let style = if st == Default::default() {
+                String::new()
+            } else {
+                format!(" ({}, {}, arrows {})", st.line.name(), st.route.name(), st.arrows.name())
+            };
+            out.push_str(&format!("- link {}: [{}] → [{}]{label}{style}\n", e.id.0, e.from.0, e.to.0));
         }
     }
     out
@@ -151,6 +188,7 @@ impl Server {
             "opml" => formats::to_opml(map),
             "freemind" | "mm" => formats::to_freemind(map),
             "svg" => formats::to_svg(map),
+            "drawio" => formats::to_drawio(map),
             other => return Err(format!("unknown format {other:?}")),
         })
     }
@@ -213,6 +251,60 @@ impl Server {
                 "json" => Ok(json!({"json": self.map().to_json()})),
                 _ => Ok(json!({"outline": outline(self.map())})),
             },
+            "list_stencils" => {
+                let italian = str_arg(args, "language") == Some("it");
+                let category = str_arg(args, "category").map(|c| c.to_ascii_lowercase());
+                Ok(Value::Array(
+                    stencil::ALL
+                        .iter()
+                        .filter(|s| category.as_deref().is_none_or(|c| s.id.starts_with(c) || s.category.name().to_ascii_lowercase().starts_with(c)))
+                        .map(|s| json!({"id": s.id, "name": s.name(italian), "category": if italian { s.category.name_it() } else { s.category.name() }, "shape": s.shape.name(), "w": s.size.w, "h": s.size.h}))
+                        .collect(),
+                ))
+            }
+            "add_shape" => {
+                let mut params = json!({"kind": str_arg(args, "kind").ok_or("`kind` is required")?});
+                for key in ["label", "x", "y", "props"] {
+                    if let Some(v) = args.get(key).filter(|v| !v.is_null()) {
+                        params[key] = v.clone();
+                    }
+                }
+                let id = self.exec("node.addShape", params)?["id"].as_u64().ok_or("no id returned")?;
+                if let (Some(w), Some(h)) = (args.get("w").and_then(Value::as_f64), args.get("h").and_then(Value::as_f64)) {
+                    self.exec("node.resize", json!({"id": id, "w": w, "h": h}))?;
+                }
+                Ok(json!({"id": id}))
+            }
+            "style_link" => {
+                let id = id_arg(args, "id")?;
+                let mut params = json!({"id": id});
+                for key in ["line", "arrows", "route", "color", "width"] {
+                    if let Some(v) = args.get(key) {
+                        params[key] = v.clone();
+                    }
+                }
+                if params.as_object().is_some_and(|o| o.len() > 1) {
+                    self.exec("edge.setStyle", params)?;
+                }
+                if let Some(label) = str_arg(args, "label") {
+                    self.exec("edge.setLabel", json!({"id": id, "label": label}))?;
+                }
+                Ok(json!({"id": id}))
+            }
+            "align" => {
+                let ids = args.get("ids").cloned().ok_or("`ids` is required")?;
+                if let Some(edge) = str_arg(args, "edge") {
+                    self.exec("arrange.align", json!({"ids": ids, "edge": edge}))?;
+                }
+                if let Some(axis) = str_arg(args, "distribute") {
+                    self.exec("arrange.distribute", json!({"ids": ids, "axis": axis}))?;
+                }
+                if args.get("snap").and_then(Value::as_bool) == Some(true) {
+                    self.exec("arrange.snap", json!({"ids": ids}))?;
+                }
+                Ok(json!({"outline": outline(self.map())}))
+            }
+            "set_mode" => self.exec("map.setMode", json!({"mode": str_arg(args, "mode").unwrap_or_default()})),
             "add_idea" => {
                 let label = str_arg(args, "label").ok_or("`label` is required")?;
                 let mut params = json!({"label": label});
@@ -403,7 +495,7 @@ mod tests {
         assert!(s.handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none(), "notifications get no reply");
         let list = s.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).unwrap();
         let tools = list["result"]["tools"].as_array().unwrap();
-        assert!(tools.len() >= 15);
+        assert!(tools.len() >= 20);
         for t in tools {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
             assert!(t["description"].as_str().is_some_and(|d| !d.is_empty()));
@@ -464,6 +556,47 @@ mod tests {
             assert_eq!(r["result"]["isError"], true, "{name} should fail cleanly: {r}");
         }
         assert_eq!(s.map().node_count(), 3, "failed tools change nothing");
+    }
+
+    #[test]
+    fn an_agent_draws_a_network_diagram() {
+        let mut s = Server::new();
+        call(&mut s, "new_map", json!({"title": "Branch office"}));
+        let stencils = call(&mut s, "list_stencils", json!({"category": "network", "language": "it"}));
+        assert!(stencils["result"].as_array().unwrap().iter().all(|st| st["id"].as_str().unwrap().starts_with("net.")));
+        let fw = call(
+            &mut s,
+            "add_shape",
+            json!({"kind": "net.firewall", "label": "FW", "x": 0, "y": 0, "props": {"ip": "10.0.0.1", "status": "up"}}),
+        )["id"]
+            .as_u64()
+            .unwrap();
+        let sw = call(&mut s, "add_shape", json!({"kind": "net.switch", "label": "SW", "x": 300, "y": 0}))["id"].as_u64().unwrap();
+        let pc = call(&mut s, "add_shape", json!({"kind": "net.pc", "x": 600, "y": 40, "w": 140, "h": 100}))["id"].as_u64().unwrap();
+        let link = call(&mut s, "link_ideas", json!({"from": fw, "to": sw}))["id"].as_u64().unwrap();
+        call(
+            &mut s,
+            "style_link",
+            json!({"id": link, "route": "orthogonal", "line": "dashed", "arrows": "both", "color": "#ff0000", "width": 2, "label": "1 Gbit"}),
+        );
+        let out = call(&mut s, "align", json!({"ids": [fw, sw, pc], "edge": "top", "distribute": "x", "snap": true}))["outline"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(out.contains("net.firewall") && out.contains("ip=10.0.0.1") && out.contains("dashed, orthogonal, arrows both"), "{out}");
+        assert_eq!(s.map().mode(), ideacraft_engine::core::Mode::Diagram);
+        let drawio = call(&mut s, "export", json!({"format": "drawio"}))["text"].as_str().unwrap().to_string();
+        assert!(drawio.contains("<mxfile") && drawio.contains("orthogonalEdgeStyle"));
+        let r = call(&mut s, "import_text", json!({"text": drawio}));
+        assert_eq!(r["format"], "draw.io / diagrams.net");
+        assert_eq!(s.map().node_count(), 3);
+        call(&mut s, "set_mode", json!({"mode": "map"}));
+        assert_eq!(s.map().mode(), ideacraft_engine::core::Mode::Map);
+        for args in [json!({"kind": "net.nope"}), json!({})] {
+            let r =
+                s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "add_shape", "arguments": args}})).unwrap();
+            assert_eq!(r["result"]["isError"], true);
+        }
     }
 
     #[test]

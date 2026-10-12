@@ -120,6 +120,7 @@ fn main() {
             "--panel" => {
                 app.sidebar = match it.next().map(String::as_str) {
                     Some("templates") => Some(ideacraft_ui_egui::SidePanel::Templates),
+                    Some("shapes") => Some(ideacraft_ui_egui::SidePanel::Shapes),
                     Some("elements") => Some(ideacraft_ui_egui::SidePanel::Elements),
                     Some("layout") => Some(ideacraft_ui_egui::SidePanel::Layout),
                     Some("files") => Some(ideacraft_ui_egui::SidePanel::Files),

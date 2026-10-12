@@ -47,12 +47,25 @@ pub struct IdeaApp {
     previews_language: Language,
     /// File dialogs the host should show (the UI crate has no file-dialog dependency).
     pub requests: Vec<Request>,
+    /// The selected link (links and ideas are never selected together).
+    pub edge_selection: Option<ideacraft_engine::core::EdgeId>,
+    edge_label_draft: Option<String>,
+    focus_edge_label: bool,
+    /// Snap moves and resizes to the grid in diagram mode.
+    pub snap: bool,
+    /// A property being added in the Elements panel: (name, value).
+    new_prop: (String, String),
+    /// Search text of the shape library.
+    pub shape_filter: String,
+    /// How many shapes were added at the view centre since the view last moved (to fan them out).
+    added_at_center: u32,
 }
 
 /// The panels of the left rail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SidePanel {
     Templates,
+    Shapes,
     Elements,
     Layout,
     Files,
@@ -74,10 +87,12 @@ pub enum ExportFormat {
     Markdown,
     Opml,
     FreeMind,
+    DrawIo,
+    Svg,
 }
 
 impl ExportFormat {
-    pub const ALL: [Self; 3] = [Self::Markdown, Self::Opml, Self::FreeMind];
+    pub const ALL: [Self; 5] = [Self::Markdown, Self::Opml, Self::FreeMind, Self::DrawIo, Self::Svg];
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -85,6 +100,8 @@ impl ExportFormat {
             Self::Markdown => "Markdown outline (.md)",
             Self::Opml => "OPML (.opml)",
             Self::FreeMind => "FreeMind / Freeplane (.mm)",
+            Self::DrawIo => "draw.io / diagrams.net (.drawio)",
+            Self::Svg => "SVG picture (.svg)",
         }
     }
 
@@ -93,6 +110,8 @@ impl ExportFormat {
             Self::Markdown => "md",
             Self::Opml => "opml",
             Self::FreeMind => "mm",
+            Self::DrawIo => "drawio",
+            Self::Svg => "svg",
         }
     }
 
@@ -102,6 +121,8 @@ impl ExportFormat {
             Self::Markdown => "markdown",
             Self::Opml => "opml",
             Self::FreeMind => "freemind",
+            Self::DrawIo => "drawio",
+            Self::Svg => "svg",
         }
     }
 }
@@ -131,7 +152,38 @@ impl IdeaApp {
             template_previews: Vec::new(),
             previews_language: Language::En,
             requests: Vec::new(),
+            edge_selection: None,
+            edge_label_draft: None,
+            focus_edge_label: false,
+            snap: true,
+            new_prop: (String::new(), String::new()),
+            shape_filter: String::new(),
+            added_at_center: 0,
         }
+    }
+
+    /// Adds a stencil near the centre of the view (each new one a little further down-right),
+    /// switching the map to diagram mode, and selects it.
+    pub fn add_shape_in_view(&mut self, kind: &str) {
+        self.commit_edit();
+        let step = self.added_at_center as f32 * 30.0;
+        let centre = -self.view.pan / self.view.zoom;
+        let x = ((centre.x + step) / canvas::GRID).round() * canvas::GRID;
+        let y = ((centre.y + step) / canvas::GRID).round() * canvas::GRID;
+        if self.run("node.addShape", json!({"kind": kind, "x": x, "y": y})).is_some() {
+            self.added_at_center = (self.added_at_center + 1) % 8;
+        }
+    }
+
+    /// Switches between mind-map and diagram mode.
+    pub fn set_mode(&mut self, diagram: bool) {
+        let mode = if diagram { "diagram" } else { "map" };
+        self.run("map.setMode", json!({"mode": mode}));
+    }
+
+    /// The map is a free diagram (shapes and connectors) rather than a mind map.
+    pub fn is_diagram(&self) -> bool {
+        self.session.map().mode() == ideacraft_engine::core::Mode::Diagram
     }
 
     /// Runs a command: the UI's own (`app.language.set`) or an engine command. Failures go to
@@ -437,6 +489,76 @@ mod tests {
         assert_eq!(app.session.map().title(), "Mappa senza titolo");
         app.run("node.delete", json!({}));
         assert_eq!(app.status, "Seleziona prima un’idea", "common engine errors are translated");
+        frame(&mut app, &ctx, vec![]);
+    }
+
+    fn pointer(app: &mut IdeaApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+        frame(app, ctx, events);
+        frame(app, ctx, vec![]);
+    }
+
+    #[test]
+    fn diagram_mode_marquee_resize_and_tooltips() {
+        use egui::{Event, PointerButton, Pos2, pos2};
+        let ctx = egui::Context::default();
+        let mut app = IdeaApp { sidebar: Some(SidePanel::Shapes), ..IdeaApp::default() };
+        app.run("map.new", json!({"title": "net"}));
+        app.add_shape_in_view("net.router");
+        app.add_shape_in_view("net.switch");
+        assert!(app.is_diagram());
+        assert_eq!(app.session.map().node_count(), 2);
+        app.run("node.setProps", json!({"id": 1, "props": {"ip": "10.0.0.1", "status": "down"}}));
+        app.run("node.move", json!({"id": 2, "x": 400, "y": 0}));
+        app.view.fit_pending = false;
+        app.view.pan = egui::Vec2::ZERO;
+        app.view.zoom = 1.0;
+        for _ in 0..2 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        // Map (0, 0) is drawn at the canvas centre (pan is zero, zoom is one).
+        let origin = app.canvas.last_canvas.center();
+        let r = app.session.map().node(ideacraft_engine::core::NodeId(1)).unwrap().pos;
+        let at = |p: ideacraft_engine::core::Point| pos2(origin.x + p.x, origin.y + p.y);
+        let press =
+            |p: Pos2, down: bool| Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: down, modifiers: egui::Modifiers::NONE };
+        // Marquee: drag over an empty area that covers both shapes.
+        let (a, b) = (at(ideacraft_engine::core::Point::new(-200.0, -200.0)), at(ideacraft_engine::core::Point::new(520.0, 120.0)));
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(a), press(a, true)]);
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(pos2(a.x + 30.0, a.y + 30.0))]);
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(b)]);
+        pointer(&mut app, &ctx, vec![press(b, false)]);
+        assert_eq!(app.session.selection().len(), 2, "marquee selects both shapes");
+        // Hover shows the properties tooltip (no panic, hover tracked).
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(at(r))]);
+        assert_eq!(app.canvas.hover, Some(ideacraft_engine::core::NodeId(1)));
+        // Resize from the bottom-right corner of the router (selected alone).
+        app.run("selection.set", json!({"ids": [1]}));
+        frame(&mut app, &ctx, vec![]);
+        let size = app.session.map().node(ideacraft_engine::core::NodeId(1)).unwrap().size.unwrap();
+        let corner = at(ideacraft_engine::core::Point::new(r.x + size.w / 2.0, r.y + size.h / 2.0));
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(corner), press(corner, true)]);
+        // Drags start after a few pixels of motion, where the handle is still under the pointer.
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(pos2(corner.x + 3.0, corner.y + 3.0))]);
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(pos2(corner.x + 40.0, corner.y + 40.0))]);
+        let end = pos2(corner.x + 60.0, corner.y + 40.0);
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(end), press(end, false)]);
+        let grown = app.session.map().node(ideacraft_engine::core::NodeId(1)).unwrap().size.unwrap();
+        assert!(grown.w > size.w && grown.h > size.h, "{size:?} → {grown:?}");
+        assert_eq!(grown.w % canvas::GRID, 0.0, "snapped to the grid");
+        // Link and style it through the link bar's commands; select the link by clicking it.
+        app.run("edge.add", json!({"from": 1, "to": 2}));
+        app.run("selection.clear", json!({}));
+        let s = app.session.map().node(ideacraft_engine::core::NodeId(2)).unwrap().pos;
+        let mid = at(ideacraft_engine::core::Point::new((r.x + s.x) / 2.0, (r.y + s.y) / 2.0));
+        pointer(&mut app, &ctx, vec![Event::PointerMoved(mid), press(mid, true), press(mid, false)]);
+        assert!(app.edge_selection.is_some(), "clicking a link selects it");
+        frame(&mut app, &ctx, vec![key(egui::Key::Delete, egui::Modifiers::NONE)]);
+        assert_eq!(app.session.map().edge_count(), 0, "Delete removes the selected link");
+        app.dark = true;
+        frame(&mut app, &ctx, vec![]);
+        app.sidebar = Some(SidePanel::Elements);
+        frame(&mut app, &ctx, vec![]);
+        app.sidebar = Some(SidePanel::Layout);
         frame(&mut app, &ctx, vec![]);
     }
 

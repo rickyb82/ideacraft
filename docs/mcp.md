@@ -49,11 +49,21 @@ between the stages, lay it out radially and save it as ciclo.ideacraft.json and 
 | `delete_idea` | Remove an idea and its branch |
 | `link_ideas` / `unlink` | Labelled concept-map links between any two ideas |
 | `layout` | `tree` or `radial` |
-| `export` | `markdown`, `opml`, `freemind`, `svg` (a picture of the map) or `ideacraft` JSON |
+| `export` | `markdown`, `opml`, `freemind`, `drawio` (for draw.io / Visio), `svg` (a picture of the map) or `ideacraft` JSON |
+| `list_stencils` | The shape library for diagrams (`category`: basic, flowchart, network, cloud, people; `language`) |
+| `add_shape` | A diagram shape from a stencil (`kind`, e.g. `net.router`, `flow.decision`, `basic.container`) with label, position, size and `props` (ip, vlan, status…); switches to diagram mode |
+| `style_link` | Line (solid/dashed/dotted), arrows (none/end/start/both), route (straight/orthogonal/curved), colour, width, label of a link |
+| `align` | Align several shapes on an edge, distribute them along x or y, snap them to the grid |
+| `set_mode` | `map` (mind map) or `diagram` |
 | `list_commands` / `run_command` | Every engine command, e.g. `edit.undo`, `node.moveBy` |
 
 Resources: `ideacraft://map` (the outline with ids, Markdown) and `ideacraft://map.json` (the
 full map). Protocol revisions 2025-06-18, 2025-03-26 and 2024-11-05 are accepted.
+
+For diagrams, ask for example: *"Draw the network of a branch office: internet, firewall, a core
+switch, two servers in a 'Server room' container and six workstations, with IP addresses and
+status, orthogonal connectors labelled with the VLAN, then export it as branch.drawio."*
+`get_map` shows each shape's stencil, size, position and properties, and each link's style.
 
 Ids are positive integers shown as `[id]` by `get_map`. Main branches get their own colour
 automatically; deeper ideas take their branch's colour.

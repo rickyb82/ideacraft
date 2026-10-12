@@ -52,6 +52,8 @@ pub struct Template {
     root_shape: Shape,
     leaf_shape: Shape,
     layout: Layout,
+    /// Built in code instead of from the outline (diagram templates).
+    diagram: Option<fn(Lang) -> Map>,
 }
 
 const fn rgb(hex: u32) -> Rgb {
@@ -114,6 +116,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Ellipse,
         leaf_shape: Shape::Pill,
         layout: Layout::Radial,
+        diagram: None,
     },
     Template {
         id: "concept-map",
@@ -166,6 +169,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Ellipse,
         leaf_shape: Shape::Rounded,
         layout: Layout::Radial,
+        diagram: None,
     },
     Template {
         id: "project-plan",
@@ -226,6 +230,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Pill,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "swot",
@@ -270,6 +275,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Ellipse,
         leaf_shape: Shape::Rounded,
         layout: Layout::Radial,
+        diagram: None,
     },
     Template {
         id: "decision",
@@ -320,6 +326,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Pill,
         leaf_shape: Shape::Pill,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "meeting",
@@ -362,6 +369,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Pill,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "book",
@@ -404,6 +412,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Rect,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "fishbone",
@@ -452,6 +461,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Rect,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "weekly",
@@ -490,6 +500,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Ellipse,
         leaf_shape: Shape::Pill,
         layout: Layout::Radial,
+        diagram: None,
     },
     Template {
         id: "roadmap",
@@ -528,6 +539,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Pill,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "journey",
@@ -573,6 +585,7 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Pill,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
     },
     Template {
         id: "lesson",
@@ -611,6 +624,91 @@ pub const ALL: &[Template] = &[
         root_shape: Shape::Ellipse,
         leaf_shape: Shape::Rounded,
         layout: Layout::Tree,
+        diagram: None,
+    },
+    Template {
+        id: "network",
+        name: "Office network",
+        description: "Internet, firewall, core switch, servers, Wi-Fi and clients, with IP addresses and status lights.",
+        category: "Diagrams",
+        outline: "",
+        links: &[],
+        it: Text {
+            name: "Rete aziendale",
+            description: "Internet, firewall, switch, server, Wi-Fi e postazioni, con indirizzi IP e stato.",
+            category: "Diagrammi",
+            outline: "",
+            links: &[],
+        },
+        palette: PASTEL,
+        root: rgb(0xffffff),
+        root_shape: Shape::Rounded,
+        leaf_shape: Shape::Rounded,
+        layout: Layout::Tree,
+        diagram: Some(crate::diagrams::office_network),
+    },
+    Template {
+        id: "flowchart",
+        name: "Flowchart",
+        description: "Start, steps, a decision with Yes/No branches, data, document and end.",
+        category: "Diagrams",
+        outline: "",
+        links: &[],
+        it: Text {
+            name: "Diagramma di flusso",
+            description: "Inizio, passaggi, una decisione con rami Sì/No, dati, documento e fine.",
+            category: "Diagrammi",
+            outline: "",
+            links: &[],
+        },
+        palette: PASTEL,
+        root: rgb(0xffffff),
+        root_shape: Shape::Rounded,
+        leaf_shape: Shape::Rounded,
+        layout: Layout::Tree,
+        diagram: Some(crate::diagrams::flowchart),
+    },
+    Template {
+        id: "cloud",
+        name: "Cloud architecture",
+        description: "Users, CDN, load balancer, services, queue, database and storage in a cloud region.",
+        category: "Diagrams",
+        outline: "",
+        links: &[],
+        it: Text {
+            name: "Architettura cloud",
+            description: "Utenti, CDN, load balancer, servizi, coda, database e storage in una regione cloud.",
+            category: "Diagrammi",
+            outline: "",
+            links: &[],
+        },
+        palette: PASTEL,
+        root: rgb(0xffffff),
+        root_shape: Shape::Rounded,
+        leaf_shape: Shape::Rounded,
+        layout: Layout::Tree,
+        diagram: Some(crate::diagrams::cloud_architecture),
+    },
+    Template {
+        id: "org-chart",
+        name: "Organisation chart",
+        description: "Who reports to whom, top-down with orthogonal lines.",
+        category: "Diagrams",
+        outline: "",
+        links: &[],
+        it: Text {
+            name: "Organigramma",
+            description: "Chi riporta a chi, dall'alto in basso con linee ortogonali.",
+            category: "Diagrammi",
+            outline: "",
+            links: &[],
+        },
+        palette: PASTEL,
+        root: rgb(0xffffff),
+        root_shape: Shape::Rounded,
+        leaf_shape: Shape::Rounded,
+        layout: Layout::Tree,
+        diagram: Some(crate::diagrams::org_chart),
     },
 ];
 
@@ -636,8 +734,16 @@ impl Template {
         self.build_in(Lang::En)
     }
 
+    /// Built in code with shapes and connectors (diagram mode).
+    pub fn is_diagram(&self) -> bool {
+        self.diagram.is_some()
+    }
+
     /// A fresh map from this template, in `lang`.
     pub fn build_in(&self, lang: Lang) -> Map {
+        if let Some(build) = self.diagram {
+            return build(lang);
+        }
         let (outline, links, name) =
             if lang == Lang::It { (self.it.outline, self.it.links, self.it.name) } else { (self.outline, self.links, self.name) };
         let mut widths = Vec::new();
@@ -680,12 +786,16 @@ mod tests {
             assert!(ALL.iter().take(i).all(|o| o.id != t.id), "duplicate {}", t.id);
             let m = t.build();
             assert!(m.node_count() >= 8, "{} is too small", t.id);
-            assert_eq!(m.roots().len(), 1, "{}", t.id);
-            assert_eq!(m.edge_count(), t.links.len(), "{}: a link names a missing idea", t.id);
+            if !t.is_diagram() {
+                assert_eq!(m.roots().len(), 1, "{}", t.id);
+                assert_eq!(m.edge_count(), t.links.len(), "{}: a link names a missing idea", t.id);
+            }
             assert_eq!(Map::from_json(&m.to_json()).as_ref(), Ok(&m));
             let it = t.build_in(Lang::It);
             assert_eq!(it.node_count(), m.node_count(), "{}: the Italian outline has the same shape", t.id);
-            assert_eq!(it.edge_count(), t.it.links.len(), "{}: an Italian link names a missing idea", t.id);
+            if !t.is_diagram() {
+                assert_eq!(it.edge_count(), t.it.links.len(), "{}: an Italian link names a missing idea", t.id);
+            }
             assert_eq!(it.title(), t.it.name);
             assert_ne!(it.to_json(), m.to_json(), "{} is translated", t.id);
         }

@@ -21,10 +21,14 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
   in the browser.
 - English and Italian interface and templates.
 - MCP server (`ideacraft-cli mcp`) for AI agents; SVG export.
+- Diagram mode: 45 stencils in five categories, sized shapes, snap grid, containers, marquee,
+  align/distribute, z-order, styled connectors (route, line, arrows, colour, width), properties
+  with status lights, draw.io import/export, four diagram templates, MCP diagram tools.
 
 ## Next (0.2)
 
-- Marquee selection, multi-select drag, keyboard navigation between ideas (arrow keys).
+- Keyboard navigation between ideas; connector waypoints and edge-to-edge attachment points.
+- Layers and groups; swimlane layouts; more stencil sets (UML, BPMN, electrical).
 - Balanced mind-map layout (branches on both sides), org-chart and timeline layouts.
 - Text formatting in ideas (bold, lists), notes, links to URLs, icons/emoji, images.
 - Free shapes and sticky notes outside the tree (board mode).
@@ -47,3 +51,4 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 | 2026-10-12 | Italian interface and templates; new canvas-tool interface; web app on GitHub Pages |
 | 2026-10-12 | MCP server for AI agents (16 tools); SVG export; automatic branch colours |
 | 2026-10-12 | MCP: `--in FILE`, saving back to .mm/.opml/.md files in their format, resources, tool aliases |
+| 2026-10-12 | Diagram mode (Visio-style): stencils, styled connectors, properties with status lights, align/distribute, draw.io import/export, diagram templates, MCP diagram tools |

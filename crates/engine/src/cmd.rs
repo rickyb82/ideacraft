@@ -2,7 +2,7 @@
 //! primitives (`node.move`, `selection.set`).
 
 use ideacraft_core::layout::{self, LEAF_GAP, LEVEL_GAP, Layout};
-use ideacraft_core::{Map, NodeId, Point, Rgb, Shape};
+use ideacraft_core::{Arrows, LineStyle, Map, Mode, NodeId, Point, Rgb, Route, Shape, Size, stencil};
 use ideacraft_formats::templates::Lang;
 use serde_json::{Value, json};
 
@@ -35,7 +35,7 @@ pub const COMMANDS: &[CommandInfo] = &[
         "New from Template",
         "File › New from Template",
         "",
-        "{template: brainstorm|concept-map|project-plan|swot|decision|meeting|book|fishbone|weekly|roadmap|journey|lesson, language?: en|it}",
+        "{template: brainstorm|concept-map|project-plan|swot|decision|meeting|book|fishbone|weekly|roadmap|journey|lesson|network|flowchart|cloud|org-chart, language?: en|it}",
         false,
     ),
     c("map.templates", "Templates", "File › New from Template", "", "{language?: en|it} → [{id, name, category, description}]", false),
@@ -44,13 +44,16 @@ pub const COMMANDS: &[CommandInfo] = &[
         "Import",
         "File › Import",
         "",
-        "{text, format?: mm|xmind|cxl|opml|md|mermaid|ideacraft} (detected when absent) → {format}",
+        "{text, format?: mm|xmind|cxl|opml|md|mermaid|drawio|ideacraft} (detected when absent) → {format}",
         false,
     ),
-    c("map.export", "Export", "File › Export", "", "{format: markdown|opml|freemind|svg|ideacraft} → {text}", false),
+    c("map.export", "Export", "File › Export", "", "{format: markdown|opml|freemind|svg|drawio|ideacraft} → {text}", false),
     c("map.setTitle", "Rename Map", "File › Rename", "", "{title}", true),
     c("map.info", "Map Info", "File › Info", "", "{} → {title, nodes, links, selection}", false),
-    c("node.add", "Add Idea", "Insert › Idea", "", "{label?, x?, y?, parent?} → {id}", true),
+    c("map.setMode", "Map / Diagram Mode", "View › Mode", "", "{mode: map|diagram}", true),
+    c("map.stencils", "Shape Library", "Insert › Shape", "", "{language?: en|it} → [{id, name, category, shape, w, h}]", false),
+    c("node.add", "Add Idea", "Insert › Idea", "", "{label?, x?, y?, parent?, kind?: stencil id, w?, h?} → {id}", true),
+    c("node.addShape", "Add Shape", "Insert › Shape", "", "{kind: stencil id (map.stencils), label?, x?, y?, props?: {k: v}} → {id}", true),
     c("node.addChild", "Add Child Idea", "Insert › Child", "Tab", "{id?, label?} (default: the selection) → {id}", true),
     c("node.addSibling", "Add Sibling Idea", "Insert › Sibling", "Enter", "{id?, label?} → {id}", true),
     c("node.delete", "Delete", "Edit › Delete", "Delete", "{id? | ids?} (removes the whole branch)", true),
@@ -58,12 +61,42 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("node.move", "Move", "Arrange › Move", "", "{id?, x, y}", true),
     c("node.moveBy", "Nudge", "Arrange › Nudge", "", "{id? | ids?, dx, dy}", true),
     c("node.setColor", "Fill Colour", "Format › Fill Colour", "", "{id? | ids?, color: \"#rrggbb\"}", true),
-    c("node.setShape", "Shape", "Format › Shape", "", "{id? | ids?, shape: rounded|rect|ellipse|pill}", true),
+    c(
+        "node.setShape",
+        "Shape",
+        "Format › Shape",
+        "",
+        "{id? | ids?, shape: rounded|rect|ellipse|pill|diamond|hexagon|parallelogram|cylinder|document|note|cloud|subprocess|text|container}",
+        true,
+    ),
+    c(
+        "node.setKind",
+        "Stencil",
+        "Format › Stencil",
+        "",
+        "{id? | ids?, kind: stencil id | null} (also sets the stencil's shape, size and colour)",
+        true,
+    ),
+    c("node.resize", "Resize", "Format › Size", "", "{id? | ids?, w, h, x?, y?} (w/h absent: auto size; x/y: new centre)", true),
+    c("node.setProps", "Properties", "Format › Properties", "", "{id? | ids?, props: {name: value}} (empty value removes; merges)", true),
+    c("node.setZ", "Bring to Front / Send to Back", "Arrange › Order", "", "{id? | ids?, z: int | \"front\" | \"back\"}", true),
+    c("edit.duplicate", "Duplicate", "Edit › Duplicate", "Cmd+D", "{id? | ids?, dx?, dy?} → {ids}", true),
+    c("arrange.align", "Align", "Arrange › Align", "", "{ids?, edge: left|right|top|bottom|centerX|centerY} (selection by default)", true),
+    c("arrange.distribute", "Distribute", "Arrange › Distribute", "", "{ids?, axis: x|y}", true),
+    c("arrange.snap", "Snap to Grid", "Arrange › Snap to Grid", "", "{ids?, grid?: number (default 20)}", true),
     c("node.toggleCollapse", "Collapse/Expand Branch", "View › Collapse/Expand", "Space", "{id? | ids?, collapsed?: bool}", true),
     c("node.setParent", "Attach To", "Arrange › Attach To", "", "{id?, parent: id | null}", true),
     c("edge.add", "Link Ideas", "Insert › Link", "", "{from, to, label?} → {id}", true),
     c("edge.delete", "Delete Link", "Edit › Delete Link", "", "{id}", true),
     c("edge.setLabel", "Link Text", "Edit › Link Text", "", "{id, label}", true),
+    c(
+        "edge.setStyle",
+        "Link Style",
+        "Format › Link Style",
+        "",
+        "{id, line?: solid|dashed|dotted, arrows?: none|end|start|both, route?: straight|orthogonal|curved, color?: \"#rrggbb\"|null, width?}",
+        true,
+    ),
     c("layout.tree", "Tree Layout", "Arrange › Tree Layout", "Cmd+L", "{}", true),
     c("layout.radial", "Radial Layout", "Arrange › Radial Layout", "Cmd+Shift+L", "{}", true),
     c("selection.set", "Select", "Edit › Select", "", "{ids: [id…]}", false),
@@ -97,6 +130,28 @@ fn language(prm: &Value) -> Result<Lang> {
         None => Ok(Lang::En),
         Some(code) => Lang::parse(code).ok_or_else(|| Error::Param("`language` must be en or it".into())),
     }
+}
+
+/// A node's centre and half-size; text-fitted nodes count as 60×30.
+fn bounds(map: &Map, id: NodeId) -> Result<(NodeId, Point, f32, f32)> {
+    let n = map.node(id).ok_or(ideacraft_core::Error::NoNode(id.0))?;
+    let (hw, hh) = n.half_size().unwrap_or((60.0, 20.0));
+    Ok((id, n.pos, hw, hh))
+}
+
+/// Applies `props: {name: value}` from the params (empty values remove).
+fn set_props(s: &mut Session, id: NodeId, prm: &Value) -> Result<()> {
+    let Some(props) = prm.get("props").filter(|v| !v.is_null()) else { return Ok(()) };
+    let obj = props.as_object().ok_or_else(|| Error::Param("`props` must be an object of name: value".into()))?;
+    for (k, v) in obj.iter().take(ideacraft_core::limits::MAX_PROPS) {
+        let value = match v {
+            Value::Null => String::new(),
+            Value::String(t) => t.clone(),
+            other => other.to_string(),
+        };
+        s.map.set_prop(id, k, &value)?;
+    }
+    Ok(())
 }
 
 fn added(s: &mut Session, id: NodeId) -> Value {
@@ -145,7 +200,8 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
                 "freemind" | "mm" => ideacraft_formats::to_freemind(&s.map),
                 "ideacraft" | "json" => s.map.to_json(),
                 "svg" => ideacraft_formats::to_svg(&s.map),
-                _ => return Err(Error::Param("`format` must be markdown, opml, freemind, svg or ideacraft".into())),
+                "drawio" => ideacraft_formats::to_drawio(&s.map),
+                _ => return Err(Error::Param("`format` must be markdown, opml, freemind, svg, drawio or ideacraft".into())),
             };
             Ok(json!({"text": text}))
         }
@@ -159,6 +215,23 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
             "links": s.map.edge_count(),
             "selection": s.selection.iter().map(|n| n.0).collect::<Vec<_>>(),
         })),
+        "map.setMode" => {
+            let mode = Mode::parse(p::str(prm, "mode")?).ok_or_else(|| Error::Param("`mode` must be map or diagram".into()))?;
+            s.map.set_mode(mode);
+            Ok(json!({}))
+        }
+        "map.stencils" => {
+            let italian = language(prm)? == Lang::It;
+            Ok(Value::Array(
+                stencil::ALL
+                    .iter()
+                    .map(|st| {
+                        let category = if italian { st.category.name_it() } else { st.category.name() };
+                        json!({"id": st.id, "name": st.name(italian), "category": category, "shape": st.shape.name(), "w": st.size.w, "h": st.size.h})
+                    })
+                    .collect(),
+            ))
+        }
         "node.add" => {
             let parent = p::opt_node(prm, "parent")?;
             let pos = match (p::opt_point(prm)?, parent) {
@@ -167,8 +240,165 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
                 (None, None) => Point::new(0.0, s.map.nodes().map(|n| n.pos.y + 100.0).fold(0.0, f32::max)),
             };
             let label = p::opt_str(prm, "label")?.unwrap_or("Idea");
-            let new = s.map.add_node(label, pos, parent)?;
+            let new = match p::opt_str(prm, "kind")? {
+                Some(kind) => {
+                    let st = stencil::find(kind)
+                        .ok_or_else(|| Error::Param(format!("unknown stencil {:?} (see map.stencils)", kind.chars().take(40).collect::<String>())))?;
+                    let id = s.map.add_stencil(st, Some(label), pos)?;
+                    if let Some(par) = parent {
+                        s.map.set_parent(id, Some(par))?;
+                    }
+                    id
+                }
+                None => s.map.add_node(label, pos, parent)?,
+            };
+            if let (Some(w), Some(h)) = (p::opt_f32(prm, "w")?, p::opt_f32(prm, "h")?) {
+                s.map.set_size(new, Some(Size::new(w, h)))?;
+            }
             Ok(added(s, new))
+        }
+        "node.addShape" => {
+            let kind = p::str(prm, "kind")?;
+            let st = stencil::find(kind)
+                .ok_or_else(|| Error::Param(format!("unknown stencil {:?} (see map.stencils)", kind.chars().take(40).collect::<String>())))?;
+            let pos = p::opt_point(prm)?.unwrap_or_else(|| {
+                // Below the lowest shape, so new shapes never land on top of each other.
+                let low = s.map.nodes().map(|n| n.pos.y + n.size.map_or(60.0, |sz| sz.h / 2.0)).fold(0.0, f32::max);
+                Point::new(0.0, if s.map.node_count() == 0 { 0.0 } else { low + st.size.h / 2.0 + 40.0 })
+            });
+            let new = s.map.add_stencil(st, p::opt_str(prm, "label")?, pos)?;
+            set_props(s, new, prm)?;
+            s.map.set_mode(Mode::Diagram);
+            Ok(added(s, new))
+        }
+        "node.setKind" => {
+            let kind =
+                match prm.get("kind") {
+                    None => return Err(Error::Param("`kind` must be a stencil id or null".into())),
+                    Some(Value::Null) => None,
+                    Some(_) => {
+                        let k = p::str(prm, "kind")?;
+                        Some(stencil::find(k).ok_or_else(|| {
+                            Error::Param(format!("unknown stencil {:?} (see map.stencils)", k.chars().take(40).collect::<String>()))
+                        })?)
+                    }
+                };
+            for t in p::targets(prm, &s.selection)? {
+                match kind {
+                    Some(st) => {
+                        s.map.set_kind(t, (!st.glyph.is_empty()).then_some(st.id))?;
+                        s.map.set_shape(t, st.shape)?;
+                        s.map.set_size(t, Some(st.size))?;
+                        s.map.set_color(t, st.color)?;
+                    }
+                    None => s.map.set_kind(t, None)?,
+                }
+            }
+            Ok(json!({}))
+        }
+        "node.resize" => {
+            let size = match (p::opt_f32(prm, "w")?, p::opt_f32(prm, "h")?) {
+                (Some(w), Some(h)) => Some(Size::new(w, h)),
+                (None, None) => None,
+                _ => return Err(Error::Param("give both `w` and `h`, or neither for auto size".into())),
+            };
+            let at = p::opt_point(prm)?;
+            for t in p::targets(prm, &s.selection)? {
+                s.map.set_size(t, size)?;
+                if let Some(at) = at {
+                    s.map.set_pos(t, at)?;
+                }
+            }
+            Ok(json!({}))
+        }
+        "node.setProps" => {
+            for t in p::targets(prm, &s.selection)? {
+                set_props(s, t, prm)?;
+            }
+            Ok(json!({}))
+        }
+        "node.setZ" => {
+            let (front, back) = (s.map.nodes().map(|n| n.z).max().unwrap_or(0), s.map.nodes().map(|n| n.z).min().unwrap_or(0));
+            let z = match prm.get("z") {
+                Some(Value::String(w)) if w == "front" => front.saturating_add(1),
+                Some(Value::String(w)) if w == "back" => back.saturating_sub(1),
+                Some(v) if v.is_i64() => v.as_i64().unwrap_or(0).clamp(-1_000, 1_000) as i32,
+                _ => return Err(Error::Param("`z` must be an integer, \"front\" or \"back\"".into())),
+            };
+            for t in p::targets(prm, &s.selection)? {
+                s.map.set_z(t, z)?;
+            }
+            Ok(json!({}))
+        }
+        "edit.duplicate" => {
+            let dx = p::opt_f32(prm, "dx")?.unwrap_or(30.0);
+            let dy = p::opt_f32(prm, "dy")?.unwrap_or(30.0);
+            let mut ids = Vec::new();
+            for t in p::targets(prm, &s.selection)? {
+                ids.push(s.map.duplicate_node(t, dx, dy)?);
+            }
+            s.selection = ids.clone();
+            Ok(json!({"ids": ids.iter().map(|n| n.0).collect::<Vec<_>>()}))
+        }
+        "arrange.align" => {
+            let ids = p::targets(prm, &s.selection)?;
+            if ids.len() < 2 {
+                return Err(Error::Param("select at least two shapes to align".into()));
+            }
+            let edge = p::str(prm, "edge")?;
+            let boxes: Vec<(NodeId, Point, f32, f32)> = ids.iter().map(|id| bounds(&s.map, *id)).collect::<Result<_>>()?;
+            let (min_x, max_x) = boxes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), (_, c, hw, _)| (lo.min(c.x - hw), hi.max(c.x + hw)));
+            let (min_y, max_y) = boxes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), (_, c, _, hh)| (lo.min(c.y - hh), hi.max(c.y + hh)));
+            for (id, c, hw, hh) in boxes {
+                let pos = match edge {
+                    "left" => Point::new(min_x + hw, c.y),
+                    "right" => Point::new(max_x - hw, c.y),
+                    "top" => Point::new(c.x, min_y + hh),
+                    "bottom" => Point::new(c.x, max_y - hh),
+                    "centerX" | "centerx" | "center" => Point::new((min_x + max_x) / 2.0, c.y),
+                    "centerY" | "centery" | "middle" => Point::new(c.x, (min_y + max_y) / 2.0),
+                    _ => return Err(Error::Param("`edge` must be left, right, top, bottom, centerX or centerY".into())),
+                };
+                s.map.set_pos(id, pos)?;
+            }
+            Ok(json!({}))
+        }
+        "arrange.distribute" => {
+            let ids = p::targets(prm, &s.selection)?;
+            if ids.len() < 3 {
+                return Err(Error::Param("select at least three shapes to distribute".into()));
+            }
+            let horizontal = match p::str(prm, "axis")? {
+                "x" | "horizontal" => true,
+                "y" | "vertical" => false,
+                _ => return Err(Error::Param("`axis` must be x or y".into())),
+            };
+            let mut boxes: Vec<(NodeId, Point, f32, f32)> = ids.iter().map(|id| bounds(&s.map, *id)).collect::<Result<_>>()?;
+            boxes.sort_by(|a, b| if horizontal { a.1.x.total_cmp(&b.1.x) } else { a.1.y.total_cmp(&b.1.y) });
+            let (Some(first), Some(last)) = (boxes.first(), boxes.last()) else { return Ok(json!({})) };
+            let span = if horizontal { (last.1.x - last.2) - (first.1.x + first.2) } else { (last.1.y - last.3) - (first.1.y + first.3) };
+            let inner: f32 = boxes.iter().skip(1).take(boxes.len().saturating_sub(2)).map(|b| if horizontal { b.2 * 2.0 } else { b.3 * 2.0 }).sum();
+            let gap = (span - inner) / (boxes.len() - 1) as f32;
+            let mut cursor = if horizontal { first.1.x + first.2 } else { first.1.y + first.3 };
+            let n = boxes.len();
+            for (i, (id, c, hw, hh)) in boxes.into_iter().enumerate() {
+                if i == 0 || i == n - 1 {
+                    continue;
+                }
+                cursor += gap;
+                let pos = if horizontal { Point::new(cursor + hw, c.y) } else { Point::new(c.x, cursor + hh) };
+                cursor += if horizontal { hw * 2.0 } else { hh * 2.0 };
+                s.map.set_pos(id, pos)?;
+            }
+            Ok(json!({}))
+        }
+        "arrange.snap" => {
+            let grid = p::opt_f32(prm, "grid")?.unwrap_or(20.0).clamp(1.0, 1000.0);
+            for t in p::targets(prm, &s.selection)? {
+                let at = node_pos(&s.map, t)?;
+                s.map.set_pos(t, Point::new((at.x / grid).round() * grid, (at.y / grid).round() * grid))?;
+            }
+            Ok(json!({}))
         }
         "node.addChild" => {
             let parent = p::target(prm, &s.selection)?;
@@ -273,6 +503,29 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
         }
         "edge.setLabel" => {
             s.map.set_edge_label(p::edge(prm, "id")?, p::str(prm, "label")?)?;
+            Ok(json!({}))
+        }
+        "edge.setStyle" => {
+            let id = p::edge(prm, "id")?;
+            let mut style = s.map.edge(id).map(|e| e.style).ok_or(ideacraft_core::Error::NoEdge(id.0))?;
+            if let Some(v) = p::opt_str(prm, "line")? {
+                style.line = LineStyle::parse(v).ok_or_else(|| Error::Param("`line` must be solid, dashed or dotted".into()))?;
+            }
+            if let Some(v) = p::opt_str(prm, "arrows")? {
+                style.arrows = Arrows::parse(v).ok_or_else(|| Error::Param("`arrows` must be none, end, start or both".into()))?;
+            }
+            if let Some(v) = p::opt_str(prm, "route")? {
+                style.route = Route::parse(v).ok_or_else(|| Error::Param("`route` must be straight, orthogonal or curved".into()))?;
+            }
+            match prm.get("color") {
+                None => {}
+                Some(Value::Null) => style.color = None,
+                Some(_) => style.color = Some(Rgb::parse(p::str(prm, "color")?)?),
+            }
+            if let Some(w) = p::opt_f32(prm, "width")? {
+                style.width = w;
+            }
+            s.map.set_edge_style(id, style)?;
             Ok(json!({}))
         }
         "layout.tree" => {

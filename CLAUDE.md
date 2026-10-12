@@ -5,7 +5,8 @@ part of the *craft* family (`gridcraft`, `pdfcraft`, …) and following the same
 
 ## Assets — absolute rule
 No vendor iconography, images, fonts, templates, themes or sample files — ever (XMind, MindManager,
-Miro, Canva, Lucid, Microsoft…). Templates, palettes and the sample map are original and defined in
+Miro, Canva, Lucid, Microsoft Visio, Cisco icon sets, draw.io's own shape libraries…). Stencils are
+original strokes in `crates/core/src/stencil.rs`; generic device symbols are fine, copied artwork is not. Templates, palettes and the sample map are original and defined in
 code (`crates/formats/src/templates.rs`, `crates/core/src/color.rs`). Any asset file needs a row in
 `ATTRIBUTION.md`. Other tools' *formats* are read from public descriptions and our own test files;
 never copy code from GPL/AGPL/LGPL projects (FreeMind, Freeplane, …).
@@ -29,7 +30,8 @@ never copy code from GPL/AGPL/LGPL projects (FreeMind, Freeplane, …).
   undoable). The UI, the CLI and the MCP server (`crates/mcp`, `ideacraft-cli mcp`) call the same
   commands; a new user-visible feature is a command first, then a tool or button.
 - **The UI is thin**: it reads `Session` state and acts through `IdeaApp::run`; colours come
-  from `theme::Tokens`, icons from `icons.rs` (drawn in code). Host-only actions (file dialogs,
+  from `theme::Tokens`, icons from `icons.rs` (drawn in code), stencil glyphs and connector
+  routing from `core` (`stencil.rs`, `route.rs`) so the canvas and the SVG export agree. Host-only actions (file dialogs,
   downloads) go through `IdeaApp::requests`, served by `apps/ideacraft` (rfd) and
   `apps/ideacraft-web` (browser picker, downloads).
 - Programmatic calls never open dialogs.

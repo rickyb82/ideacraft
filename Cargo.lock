@@ -1429,6 +1429,7 @@ dependencies = [
 name = "ideacraft-formats"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ideacraft-core",
  "quick-xml",
  "serde_json",

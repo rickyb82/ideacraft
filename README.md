@@ -19,21 +19,33 @@ conventions: everything is a command, nothing crashes, and every file stays read
 - **English and Italian** — the interface and the templates; the system or browser language is
   used on first run.
 - **Desktop and web** — the same Rust code runs natively and in the browser (WebAssembly).
+- **Diagram mode (Visio-style)** — switch any map to a free diagram: a shape library of
+  45 original stencils (basic shapes, flowchart symbols, network devices, cloud & servers, people
+  & places), resizable shapes with snap-to-grid, containers/zones, marquee selection, align and
+  distribute, duplicate, front/back ordering, and styled connectors (straight, orthogonal or
+  curved; solid, dashed or dotted; arrows at either end; colour and width).
+- **Interactive network diagrams** — every shape carries free properties (IP, VLAN, model,
+  owner…) shown in a tooltip and editable in the Elements panel; a `status` of up / warning /
+  down lights a green, amber or red indicator on the shape.
+- **draw.io interchange** — open `.drawio` files (plain or compressed) and export to draw.io, so
+  diagrams travel to and from diagrams.net, Visio and the tools that read it.
 
 - **Infinite canvas** — pan, zoom around the pointer, fit to window, light and dark themes.
 - **Ideas and structure** — a parent/child tree per map (Tab adds a child, Enter a sibling),
   free labelled links between any two ideas (Shift+drag, or the Link tool), collapsible branches.
 - **Dynamic layouts** — tree and radial layouts, re-run any time; drag an idea up or down and
   re-layout to reorder it.
-- **Styling** — node fills from an original palette and four shapes (rounded, rect, ellipse, pill).
-- **12 built-in templates** — Brainstorming, Concept map, Project plan, SWOT analysis, Decision
-  making, Meeting notes, Book summary, Cause and effect, Weekly planner, Product roadmap,
-  Customer journey, Lesson plan. All are original and defined in code.
+- **Styling** — node fills from an original palette and 14 shapes (rounded, rect, ellipse, pill,
+  diamond, hexagon, parallelogram, cylinder, document, note, cloud, subprocess, text, container).
+- **16 built-in templates** — 12 maps (Brainstorming, Concept map, Project plan, SWOT analysis,
+  Decision making, Meeting notes, Book summary, Cause and effect, Weekly planner, Product roadmap,
+  Customer journey, Lesson plan) and 4 diagrams (Office network, Flowchart, Cloud architecture,
+  Organisation chart). All are original and defined in code.
 - **Import** — FreeMind / Freeplane (`.mm`), XMind (`.xmind`, current and legacy), CmapTools
-  (`.cxl`), OPML, Markdown / indented outlines, Mermaid (`mindmap`, simple `flowchart`).
-  Open a file or drop it on the window.
-- **Export** — Markdown outline, OPML, FreeMind `.mm`, SVG, and IdeaCraft's own plain-JSON
-  format (`.ideacraft.json`).
+  (`.cxl`), OPML, Markdown / indented outlines, Mermaid (`mindmap`, simple `flowchart`), draw.io
+  (`.drawio`). Open a file or drop it on the window.
+- **Export** — Markdown outline, OPML, FreeMind `.mm`, draw.io, SVG, and IdeaCraft's own
+  plain-JSON format (`.ideacraft.json`).
 - **Undo/redo** for every change; the map is restored if a command ever fails.
 - **MCP server for AI agents** — `ideacraft-cli mcp` lets Claude (or any MCP client) create,
   edit, lay out, export (including SVG) and save maps; see [docs/mcp.md](docs/mcp.md).
@@ -75,6 +87,10 @@ Export download the file; the open map, language and theme are kept in the brows
 | Cmd/Ctrl+L, Cmd/Ctrl+Shift+L | tree layout, radial layout |
 | Cmd/Ctrl+0 | fit the map in the window |
 | Cmd/Ctrl+O, S, Shift+S, N | open/import, save, save as, new |
+| Cmd/Ctrl+D | duplicate |
+| Cmd/Ctrl+] / Cmd/Ctrl+[ | bring to front / send to back |
+| Arrow keys (Shift: one grid step) | nudge the selection |
+| Drag on empty space (diagram mode) | marquee selection; corner handles resize |
 
 ### AI agents (MCP)
 

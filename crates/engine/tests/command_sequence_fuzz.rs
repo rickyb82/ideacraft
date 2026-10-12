@@ -30,8 +30,16 @@ fn random_params(r: &mut Rng, s: &Session) -> Value {
     let b = pick(r);
     let colors = ["#ffe08a", "#B3D4FF", "nope", ""];
     let shapes = ["rounded", "rect", "ellipse", "pill", "star"];
-    match r.below(4) {
+    let kinds = ["net.router", "flow.decision", "basic.container", "nope"];
+    let edges = ["solid", "dashed", "orthogonal", "both", "x"];
+    match r.below(6) {
         0 => json!({}),
+        4 => {
+            json!({"id": a, "ids": [a, b], "kind": kinds[r.below(4) as usize], "w": r.below(500) as f64 - 10.0, "h": r.below(300) as f64, "props": {"ip": "10.0.0.1", "status": "down", "": "x"}, "edge": "left", "axis": "x", "mode": "diagram", "z": "front"})
+        }
+        5 => {
+            json!({"id": a, "line": edges[r.below(5) as usize], "arrows": edges[r.below(5) as usize], "route": edges[r.below(5) as usize], "color": null, "width": r.below(40) as f64 - 5.0, "grid": r.below(60) as f64, "dx": 5, "dy": 5})
+        }
         1 => json!({"id": a, "parent": b, "from": a, "to": b, "label": "x", "x": r.below(800) as f64 - 400.0, "y": r.below(800) as f64}),
         2 => json!({"ids": [a, b], "color": colors[r.below(4) as usize], "shape": shapes[r.below(5) as usize], "dx": 3, "dy": -2}),
         _ => json!({"id": a, "title": "t", "parent": null, "collapsed": r.below(2) == 0}),

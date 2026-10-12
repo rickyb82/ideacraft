@@ -84,6 +84,17 @@ pub fn top_bar(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui.label(RichText::new("•").color(t.muted)).on_hover_text(app.tr("Unsaved changes"));
             }
             divider(ui, t);
+            let diagram = app.is_diagram();
+            if icon_button(ui, t, Icon::MindMap, app.tr("Mind map mode"), true, !diagram).clicked() && diagram {
+                app.set_mode(false);
+            }
+            if icon_button(ui, t, Icon::Diagram, app.tr("Diagram mode"), true, diagram).clicked() && !diagram {
+                app.set_mode(true);
+                if app.sidebar.is_none() {
+                    app.sidebar = Some(SidePanel::Shapes);
+                }
+            }
+            divider(ui, t);
             let (can_undo, can_redo) = (app.session.can_undo(), app.session.can_redo());
             if icon_button(ui, t, Icon::Undo, &app.tip("edit.undo"), can_undo, false).clicked() {
                 app.commit_edit();

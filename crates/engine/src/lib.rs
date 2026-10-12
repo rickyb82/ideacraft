@@ -190,5 +190,45 @@ mod tests {
         assert_eq!(s.map().title(), "Analisi SWOT");
         assert!(s.map().nodes().any(|n| n.label == "Punti di forza"));
         assert!(s.execute("map.newFromTemplate", &json!({"template": "swot", "language": "xx"})).is_err());
+
+        // Diagram commands.
+        s.execute("map.new", &json!({"title": "net"})).unwrap();
+        let r = s
+            .execute("node.addShape", &json!({"kind": "net.router", "label": "R1", "x": 0, "y": 0, "props": {"ip": "10.0.0.1", "status": "up"}}))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        assert_eq!(s.map().mode(), ideacraft_core::Mode::Diagram);
+        assert_eq!(s.map().node(NodeId(r)).unwrap().props.get("ip").map(String::as_str), Some("10.0.0.1"));
+        let sw = s.execute("node.addShape", &json!({"kind": "net.switch", "x": 300, "y": 0})).unwrap()["id"].as_u64().unwrap();
+        let pc = s.execute("node.addShape", &json!({"kind": "net.pc", "x": 600, "y": 50})).unwrap()["id"].as_u64().unwrap();
+        assert!(s.execute("node.addShape", &json!({"kind": "net.nope"})).is_err());
+        let e = s.execute("edge.add", &json!({"from": r, "to": sw, "label": "1G"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("edge.setStyle", &json!({"id": e, "line": "dashed", "arrows": "both", "route": "orthogonal", "color": "#ff0000", "width": 3}))
+            .unwrap();
+        let st = s.map().edge(ideacraft_core::EdgeId(e)).unwrap().style;
+        assert_eq!(
+            (st.line, st.arrows, st.route, st.width),
+            (ideacraft_core::LineStyle::Dashed, ideacraft_core::Arrows::Both, ideacraft_core::Route::Orthogonal, 3.0)
+        );
+        assert!(s.execute("edge.setStyle", &json!({"id": e, "route": "zigzag"})).is_err());
+        s.execute("arrange.align", &json!({"ids": [r, sw, pc], "edge": "top"})).unwrap();
+        assert!(s.map().nodes().all(|n| (n.pos.y - n.half_size().unwrap().1 - (0.0 - 46.0)).abs() < 0.01), "tops aligned to the highest");
+        s.execute("arrange.distribute", &json!({"ids": [r, sw, pc], "axis": "x"})).unwrap();
+        let xs: Vec<f32> = [r, sw, pc].iter().map(|id| s.map().node(NodeId(*id)).unwrap().pos.x).collect();
+        assert!((xs[1] - xs[0] - (xs[2] - xs[1])).abs() < 0.01, "{xs:?}");
+        s.execute("node.resize", &json!({"id": pc, "w": 200, "h": 120})).unwrap();
+        assert_eq!(s.map().node(NodeId(pc)).unwrap().size, Some(ideacraft_core::Size::new(200.0, 120.0)));
+        let copies = s.execute("edit.duplicate", &json!({"ids": [r]})).unwrap()["ids"].clone();
+        assert_eq!(copies.as_array().unwrap().len(), 1);
+        s.execute("node.setZ", &json!({"id": pc, "z": "front"})).unwrap();
+        assert_eq!(s.map().nodes_in_draw_order().last().unwrap().id, NodeId(pc));
+        s.execute("node.setKind", &json!({"id": pc, "kind": "flow.decision"})).unwrap();
+        assert_eq!(s.map().node(NodeId(pc)).unwrap().shape, ideacraft_core::Shape::Diamond);
+        s.execute("arrange.snap", &json!({"ids": [pc], "grid": 50})).unwrap();
+        assert_eq!(s.map().node(NodeId(pc)).unwrap().pos.x % 50.0, 0.0);
+        assert!(s.execute("map.stencils", &json!({"language": "it"})).unwrap().as_array().unwrap().len() > 30);
+        s.execute("map.setMode", &json!({"mode": "map"})).unwrap();
+        assert_eq!(s.map().mode(), ideacraft_core::Mode::Map);
     }
 }

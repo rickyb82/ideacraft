@@ -1,7 +1,8 @@
-//! The left rail and its panels: Templates, Elements, Layout and Files.
+//! The left rail and its panels: Templates, Shapes, Elements, Layout and Files.
 
 use egui::{Color32, FontId, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
-use ideacraft_engine::core::{Rgb, Shape};
+use ideacraft_engine::core::route::glyph_box;
+use ideacraft_engine::core::{Rgb, Shape, stencil};
 use ideacraft_engine::formats::templates;
 use serde_json::json;
 
@@ -20,6 +21,7 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.vertical_centered(|ui| {
             for (panel, icon, label) in [
                 (SidePanel::Templates, Icon::Templates, "Templates"),
+                (SidePanel::Shapes, Icon::Shapes, "Shapes"),
                 (SidePanel::Elements, Icon::Elements, "Elements"),
                 (SidePanel::Layout, Icon::Layout, "Layout"),
                 (SidePanel::Files, Icon::Files, "Files"),
@@ -37,6 +39,7 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.horizontal(|ui| {
             let title = match panel {
                 SidePanel::Templates => "Templates",
+                SidePanel::Shapes => "Shapes",
                 SidePanel::Elements => "Elements",
                 SidePanel::Layout => "Layout",
                 SidePanel::Files => "Files",
@@ -51,6 +54,7 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.add_space(6.0);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match panel {
             SidePanel::Templates => templates_panel(app, ui, t),
+            SidePanel::Shapes => shapes_panel(app, ui, t),
             SidePanel::Elements => elements_panel(app, ui, t),
             SidePanel::Layout => layout_panel(app, ui, t),
             SidePanel::Files => files_panel(app, ui, t),
@@ -124,17 +128,137 @@ fn templates_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
     });
 }
 
+/// Link colours offered in the link bar.
+pub const LINK_COLORS: [Rgb; 8] = [
+    Rgb(0xe0, 0x6a, 0x2c),
+    Rgb(0x4a, 0x4f, 0x5e),
+    Rgb(0x5b, 0x5b, 0xf0),
+    Rgb(0x22, 0xa0, 0x6b),
+    Rgb(0xe5, 0x48, 0x4d),
+    Rgb(0xe3, 0xa0, 0x08),
+    Rgb(0x8a, 0x90, 0xa3),
+    Rgb(0x1f, 0x9a, 0xd6),
+];
+
+/// Draws a small preview of a shape (and stencil glyph) in `r`.
+pub fn shape_preview(p: &egui::Painter, r: Rect, shape: Shape, glyph: Option<stencil::Glyph>, fill: Color32, ink: Color32) {
+    let (w, h) = (r.width(), r.height());
+    let stroke = Stroke::new(1.0, ink.gamma_multiply(0.5));
+    match shape {
+        Shape::Text => {
+            p.text(r.center(), egui::Align2::CENTER_CENTER, "Aa", FontId::proportional(h * 0.6), ink);
+        }
+        Shape::Container => {
+            p.rect_filled(r, 4.0, fill.gamma_multiply(0.6));
+            let c = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+            p.extend(egui::Shape::dashed_line(&c, stroke, 4.0, 3.0));
+        }
+        Shape::Ellipse => {
+            p.add(egui::Shape::ellipse_filled(r.center(), r.size() / 2.0, fill));
+            p.add(egui::Shape::ellipse_stroke(r.center(), r.size() / 2.0, stroke));
+        }
+        s => match s.polygon(w, h) {
+            Some(poly) => {
+                let pts: Vec<egui::Pos2> = poly.iter().map(|q| r.center() + vec2(q.x, q.y)).collect();
+                p.add(egui::Shape::convex_polygon(pts.clone(), fill, Stroke::NONE));
+                p.add(egui::Shape::closed_line(pts, stroke));
+            }
+            None => {
+                let rr = match s {
+                    Shape::Rect | Shape::Subprocess => 0.0,
+                    Shape::Pill => h / 2.0,
+                    _ => 5.0,
+                };
+                p.rect_filled(r, rr, fill);
+                p.rect_stroke(r, rr, stroke, StrokeKind::Inside);
+            }
+        },
+    }
+    for line in shape.inner_strokes(w, h) {
+        p.add(egui::Shape::line(line.iter().map(|q| r.center() + vec2(q.x, q.y)).collect(), stroke));
+    }
+    if let Some(g) = glyph {
+        let (gx, gy, gw, gh) = glyph_box(w, h, false);
+        let at = |(x, y): &(f32, f32)| r.center() + vec2(gx + x * gw, gy + y * gh);
+        let st = Stroke::new(1.3, ink);
+        for line in g.lines {
+            p.add(egui::Shape::line(line.iter().map(at).collect(), st));
+        }
+        for (x, y, rad) in g.circles {
+            p.circle_stroke(at(&(*x, *y)), rad * gw, st);
+        }
+        for poly in g.fills {
+            p.add(egui::Shape::convex_polygon(poly.iter().map(at).collect(), ink, Stroke::NONE));
+        }
+    }
+}
+
+/// The shape library: every stencil by category; a click adds it to the diagram.
+fn shapes_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
+    let italian = app.language == crate::Language::It;
+    ui.label(
+        RichText::new(app.tr("Click a shape to add it. Drag it on the canvas, resize it from its corners, Shift+drag to connect."))
+            .small()
+            .color(t.muted),
+    );
+    let mut filter = app.shape_filter.clone();
+    if ui.add(egui::TextEdit::singleline(&mut filter).hint_text(app.tr("Search shapes")).desired_width(f32::INFINITY)).changed() {
+        app.shape_filter = filter.clone();
+    }
+    let needle = filter.trim().to_ascii_lowercase();
+    for category in stencil::Category::ALL {
+        let items: Vec<&stencil::Stencil> = stencil::in_category(category)
+            .filter(|s| needle.is_empty() || s.name(italian).to_ascii_lowercase().contains(&needle) || s.id.contains(&needle))
+            .collect();
+        if items.is_empty() {
+            continue;
+        }
+        section(ui, t, if italian { category.name_it() } else { category.name() });
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            for st in items {
+                let (rect, resp) = ui.allocate_exact_size(vec2(92.0, 78.0), Sense::click());
+                let p = ui.painter();
+                p.rect_filled(rect, 8.0, if resp.hovered() { t.hover } else { t.card });
+                p.rect_stroke(rect, 8.0, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.border }), StrokeKind::Inside);
+                let preview =
+                    Rect::from_center_size(rect.center() - vec2(0.0, 10.0), vec2(if st.shape == Shape::Container { 56.0 } else { 46.0 }, 30.0));
+                let glyph = (!st.glyph.is_empty()).then_some(st.glyph);
+                shape_preview(p, preview, st.shape, glyph, Color32::from_rgb(st.color.0, st.color.1, st.color.2), t.ui_text);
+                let name = p.with_clip_rect(rect.shrink(3.0));
+                name.text(
+                    pos2(rect.center().x, rect.bottom() - 8.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    st.name(italian),
+                    FontId::proportional(11.0),
+                    t.ui_text,
+                );
+                if resp.on_hover_text(st.name(italian)).clicked() {
+                    app.add_shape_in_view(st.id);
+                }
+            }
+        });
+    }
+}
+
 fn elements_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
     let has_sel = !app.session.selection().is_empty();
+    let diagram = app.is_diagram();
     section(ui, t, app.tr("Add"));
     if icon_text_button(ui, t, Icon::Plus, app.tr("New idea"), true).clicked() {
         app.run_and_edit("node.add", json!({}));
     }
-    if icon_text_button(ui, t, Icon::Child, app.tr("Child idea"), has_sel).on_hover_text(app.tip("node.addChild")).clicked() {
-        app.run_and_edit("node.addChild", json!({}));
-    }
-    if icon_text_button(ui, t, Icon::Sibling, app.tr("Same level"), has_sel).on_hover_text(app.tip("node.addSibling")).clicked() {
-        app.run_and_edit("node.addSibling", json!({}));
+    if diagram {
+        if icon_text_button(ui, t, Icon::Shapes, app.tr("Shape library"), true).clicked() {
+            app.sidebar = Some(SidePanel::Shapes);
+        }
+    } else {
+        if icon_text_button(ui, t, Icon::Child, app.tr("Child idea"), has_sel).on_hover_text(app.tip("node.addChild")).clicked() {
+            app.run_and_edit("node.addChild", json!({}));
+        }
+        if icon_text_button(ui, t, Icon::Sibling, app.tr("Same level"), has_sel).on_hover_text(app.tip("node.addSibling")).clicked() {
+            app.run_and_edit("node.addSibling", json!({}));
+        }
     }
     let link = icon_text_button(ui, t, Icon::Link, app.tr("Link ideas"), true);
     if app.link_mode {
@@ -147,11 +271,61 @@ fn elements_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.add_space(8.0);
         ui.label(RichText::new(app.tr("Select an idea to change its shape and colour.")).small().color(t.muted));
     }
+    // Properties of the selected shape.
+    let single = match app.session.selection() {
+        [only] => app.session.map().node(*only).cloned().map(|n| (*only, n)),
+        _ => None,
+    };
+    if let Some((only, n)) = single {
+        section(ui, t, app.tr("Properties"));
+        let italian = app.language == crate::Language::It;
+        if let Some(st) = n.kind.as_deref().and_then(stencil::find) {
+            ui.label(RichText::new(st.name(italian)).small().color(t.muted));
+        }
+        let (mut w, mut h) = n.size.map(|s| (s.w, s.h)).unwrap_or((0.0, 0.0));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(app.tr("Size")).small().color(t.muted));
+            let cw = ui.add(egui::DragValue::new(&mut w).range(16.0..=4000.0).speed(1.0).suffix(" w"));
+            let ch = ui.add(egui::DragValue::new(&mut h).range(16.0..=4000.0).speed(1.0).suffix(" h"));
+            if (cw.changed() || ch.changed()) && w >= 16.0 && h >= 16.0 {
+                app.run("node.resize", json!({"id": only.0, "w": w, "h": h}));
+            }
+            if n.size.is_some() && ui.small_button(app.tr("Auto")).on_hover_text(app.tr("Fit the text")).clicked() {
+                app.run("node.resize", json!({"id": only.0}));
+            }
+        });
+        egui::Grid::new("props").num_columns(3).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
+            for (k, v) in &n.props {
+                ui.label(RichText::new(k).small().color(t.muted));
+                let mut value = v.clone();
+                let te = ui.add(egui::TextEdit::singleline(&mut value).desired_width(120.0));
+                if te.lost_focus() && value != *v {
+                    app.run("node.setProps", json!({"id": only.0, "props": {k: value}}));
+                }
+                if icon_button(ui, t, Icon::Close, app.tr("Remove"), true, false).clicked() {
+                    app.run("node.setProps", json!({"id": only.0, "props": {k: ""}}));
+                }
+                ui.end_row();
+            }
+            let (mut name, mut value) = app.new_prop.clone();
+            ui.add(egui::TextEdit::singleline(&mut name).hint_text(app.tr("name")).desired_width(80.0));
+            let ve = ui.add(egui::TextEdit::singleline(&mut value).hint_text(app.tr("value")).desired_width(120.0));
+            let add = icon_button(ui, t, Icon::Plus, app.tr("Add property"), !name.trim().is_empty(), false).clicked();
+            app.new_prop = (name.clone(), value.clone());
+            if (add || (ve.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && !name.trim().is_empty() {
+                app.run("node.setProps", json!({"id": only.0, "props": {name.trim(): value}}));
+                app.new_prop = (String::new(), String::new());
+            }
+            ui.end_row();
+        });
+        ui.label(RichText::new(app.tr("A `status` of up, warning or down shows a light on the shape.")).small().color(t.muted));
+    }
     section(ui, t, app.tr("Shape"));
     let current = app.session.selection().first().and_then(|id| app.session.map().node(*id)).map(|n| n.shape);
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
         for shape in Shape::ALL {
-            let (rect, resp) = ui.allocate_exact_size(vec2(62.0, 46.0), if has_sel { Sense::click() } else { Sense::hover() });
+            let (rect, resp) = ui.allocate_exact_size(vec2(58.0, 44.0), if has_sel { Sense::click() } else { Sense::hover() });
             let p = ui.painter();
             let on = current == Some(shape);
             p.rect_filled(
@@ -166,22 +340,8 @@ fn elements_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
                 },
             );
             p.rect_stroke(rect, 8.0, Stroke::new(1.0, if on { t.accent } else { t.border }), StrokeKind::Inside);
-            let r = Rect::from_center_size(rect.center(), vec2(40.0, 22.0));
-            let fill = Color32::from_rgb(0xb3, 0xd4, 0xff);
-            match shape {
-                Shape::Ellipse => {
-                    p.add(egui::Shape::ellipse_filled(r.center(), r.size() / 2.0, fill));
-                }
-                Shape::Rect => {
-                    p.rect_filled(r, 0.0, fill);
-                }
-                Shape::Pill => {
-                    p.rect_filled(r, 11.0, fill);
-                }
-                Shape::Rounded => {
-                    p.rect_filled(r, 5.0, fill);
-                }
-            }
+            let r = Rect::from_center_size(rect.center(), vec2(40.0, 24.0));
+            shape_preview(p, r, shape, None, Color32::from_rgb(0xb3, 0xd4, 0xff), t.ui_text);
             if resp.on_hover_text(app.tr(shape.name())).clicked() {
                 app.run("node.setShape", json!({"shape": shape.name()}));
             }
@@ -230,6 +390,48 @@ fn big_choice(ui: &mut egui::Ui, t: &Tokens, icon: Icon, title: &str, text: &str
 }
 
 fn layout_panel(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
+    if app.is_diagram() {
+        let n = app.session.selection().len();
+        section(ui, t, app.tr("Align the selected shapes"));
+        ui.horizontal(|ui| {
+            for (icon, edge, tip) in [
+                (Icon::AlignLeft, "left", "Align left"),
+                (Icon::AlignCenterX, "centerX", "Align centres"),
+                (Icon::AlignRight, "right", "Align right"),
+                (Icon::AlignTop, "top", "Align top"),
+                (Icon::AlignCenterY, "centerY", "Align middles"),
+                (Icon::AlignBottom, "bottom", "Align bottom"),
+            ] {
+                if icon_button(ui, t, icon, app.tr(tip), n >= 2, false).clicked() {
+                    app.run("arrange.align", json!({"edge": edge}));
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            if icon_button(ui, t, Icon::DistributeX, app.tr("Distribute horizontally"), n >= 3, false).clicked() {
+                app.run("arrange.distribute", json!({"axis": "x"}));
+            }
+            if icon_button(ui, t, Icon::DistributeY, app.tr("Distribute vertically"), n >= 3, false).clicked() {
+                app.run("arrange.distribute", json!({"axis": "y"}));
+            }
+            if icon_button(ui, t, Icon::Grid, app.tr("Snap selection to grid"), n >= 1, false).clicked() {
+                app.run("arrange.snap", json!({}));
+            }
+            if icon_button(ui, t, Icon::Duplicate, &app.tip("edit.duplicate"), n >= 1, false).clicked() {
+                app.run("edit.duplicate", json!({}));
+            }
+            if icon_button(ui, t, Icon::ToFront, app.tr("Bring to front"), n >= 1, false).clicked() {
+                app.run("node.setZ", json!({"z": "front"}));
+            }
+            if icon_button(ui, t, Icon::ToBack, app.tr("Send to back"), n >= 1, false).clicked() {
+                app.run("node.setZ", json!({"z": "back"}));
+            }
+        });
+        let mut snap = app.snap;
+        if ui.checkbox(&mut snap, app.tr("Snap to grid while moving and resizing")).changed() {
+            app.snap = snap;
+        }
+    }
     section(ui, t, app.tr("Arrange the whole map"));
     if big_choice(ui, t, Icon::Tree, app.tr("Tree"), app.tr("Branches from left to right")).on_hover_text(app.tip("layout.tree")).clicked() {
         app.run("layout.tree", json!({}));

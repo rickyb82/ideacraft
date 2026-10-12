@@ -9,10 +9,12 @@ mod color;
 mod error;
 pub mod layout;
 mod map;
+pub mod route;
+pub mod stencil;
 
 pub use color::Rgb;
 pub use error::{Error, Result};
-pub use map::{Edge, EdgeId, Map, Node, NodeId, Point, Shape};
+pub use map::{Arrows, Edge, EdgeId, EdgeStyle, LineStyle, Map, Mode, Node, NodeId, Point, Route, Shape, Size, Status};
 
 /// Limits applied to every document, whoever built it: files, commands and the CLI are hostile.
 pub mod limits {
@@ -26,4 +28,11 @@ pub mod limits {
     pub const MAX_DEPTH: usize = 512;
     /// Largest coordinate magnitude; positions are clamped into ±this.
     pub const MAX_COORD: f32 = 1.0e6;
+    /// Explicit node sizes are clamped into this range.
+    pub const MIN_SIZE: f32 = 16.0;
+    pub const MAX_SIZE: f32 = 4_000.0;
+    /// Most properties on one node.
+    pub const MAX_PROPS: usize = 64;
+    /// Longest property name or value, in characters.
+    pub const MAX_PROP_CHARS: usize = 500;
 }
