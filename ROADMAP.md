@@ -15,16 +15,20 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
   OPML, FreeMind; native `.ideacraft.json`.
 - Command engine with undo/redo, panic guard, command-sequence fuzzing; headless CLI;
   offscreen snapshot renderer.
+- Canvas-tool interface (top bar, left rail with panels, floating selection bar, zoom), icons
+  drawn in code, light/dark themes.
+- Web app (WebAssembly, trunk) published to GitHub Pages; browser open/save/export, state kept
+  in the browser.
+- English and Italian interface and templates.
 
 ## Next (0.2)
 
-- Web build (WASM) with browser open/save.
 - Marquee selection, multi-select drag, keyboard navigation between ideas (arrow keys).
 - Balanced mind-map layout (branches on both sides), org-chart and timeline layouts.
 - Text formatting in ideas (bold, lists), notes, links to URLs, icons/emoji, images.
 - Free shapes and sticky notes outside the tree (board mode).
 - Themes: whole-map colour schemes, fonts from `storytold/craft-fonts`.
-- Interface languages, starting with Italian.
+- More interface languages.
 
 ## Later
 
@@ -38,3 +42,4 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 | Date | Change |
 |---|---|
 | 2026-10-12 | 0.1: skeleton, canvas, layouts, 12 templates, 6 import formats, 3 export formats, CLI |
+| 2026-10-12 | Italian interface and templates; new canvas-tool interface; web app on GitHub Pages |

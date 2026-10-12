@@ -1,4 +1,5 @@
-//! Repository tasks: `cargo xtask ci` (fmt, clippy, tests, layers) and `cargo xtask layers`.
+//! Repository tasks: `cargo xtask ci` (fmt, clippy, tests, layers, wasm), `cargo xtask layers`
+//! and `cargo xtask wasm`.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("crates/ui-egui", &["ideacraft-engine", "egui"]),
     ("apps/ideacraft", &["ideacraft-ui-egui", "egui", "eframe", "rfd"]),
     ("apps/ideacraft-cli", &["ideacraft-engine"]),
+    ("apps/ideacraft-web", &["ideacraft-ui-egui", "egui", "eframe", "rfd"]),
 ];
 const WATCHED: &[&str] = &["ideacraft-core", "ideacraft-formats", "ideacraft-engine", "ideacraft-ui-egui", "egui", "eframe", "winit", "rfd"];
 
@@ -50,7 +52,13 @@ fn ci() -> Result<(), String> {
     cargo(&["fmt", "--all", "--", "--check"])?;
     cargo(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"])?;
     cargo(&["test", "--workspace"])?;
-    layers()
+    layers()?;
+    wasm()
+}
+
+/// The web app and everything under it build for wasm32 with clippy clean.
+fn wasm() -> Result<(), String> {
+    cargo(&["clippy", "-p", "ideacraft-web", "--target", "wasm32-unknown-unknown", "--", "-D", "warnings"])
 }
 
 fn main() -> ExitCode {
@@ -58,7 +66,8 @@ fn main() -> ExitCode {
     let result = match task.as_str() {
         "ci" => ci(),
         "layers" => layers(),
-        _ => Err("usage: cargo xtask <ci|layers>".to_string()),
+        "wasm" => wasm(),
+        _ => Err("usage: cargo xtask <ci|layers|wasm>".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

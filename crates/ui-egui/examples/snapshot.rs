@@ -1,6 +1,6 @@
 //! Renders the UI offscreen to a PNG with a small software rasteriser: no window, no GPU.
 //!
-//! `cargo run -p ideacraft-ui-egui --example snapshot -- [--sample | --template ID | --gallery | FILE] out.png [--dark] [--lang it] [--size WxH]`
+//! `cargo run -p ideacraft-ui-egui --example snapshot -- [--sample | --template ID | --gallery | FILE] out.png [--dark] [--lang it] [--panel templates|elements|layout|files] [--select ID] [--size WxH]`
 
 use std::collections::HashMap;
 
@@ -114,9 +114,22 @@ fn main() {
             }
             "--gallery" => {
                 app = IdeaApp::default();
-                app.gallery_open = true;
+                app.sidebar = Some(ideacraft_ui_egui::SidePanel::Templates);
             }
             "--dark" => dark = true,
+            "--panel" => {
+                app.sidebar = match it.next().map(String::as_str) {
+                    Some("templates") => Some(ideacraft_ui_egui::SidePanel::Templates),
+                    Some("elements") => Some(ideacraft_ui_egui::SidePanel::Elements),
+                    Some("layout") => Some(ideacraft_ui_egui::SidePanel::Layout),
+                    Some("files") => Some(ideacraft_ui_egui::SidePanel::Files),
+                    _ => None,
+                };
+            }
+            "--select" => {
+                let id = it.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(1);
+                app.run("selection.set", json!({"ids": [id]}));
+            }
             "--size" => {
                 if let Some((a, b)) = it.next().and_then(|s| s.split_once('x')) {
                     w = a.parse().unwrap_or(w);
@@ -128,8 +141,8 @@ fn main() {
         }
     }
     app.language = language;
+    app.dark = dark;
     let ctx = egui::Context::default();
-    ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
     let mut textures = HashMap::new();
     let mut last = None;
     for _ in 0..4 {

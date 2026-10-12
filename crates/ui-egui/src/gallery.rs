@@ -1,15 +1,9 @@
-//! The template gallery: a card per template with a drawn preview.
+//! Template previews: a miniature of a map.
 
-use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
+use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
 use ideacraft_engine::core::Map;
-use ideacraft_engine::formats::templates;
-use serde_json::json;
 
-use crate::IdeaApp;
 use crate::theme::Tokens;
-
-const CARD: Vec2 = vec2(230.0, 190.0);
-const THUMB_H: f32 = 120.0;
 
 /// Draws a miniature of `map` inside `rect`.
 pub fn thumbnail(painter: &egui::Painter, map: &Map, rect: Rect, t: &Tokens) {
@@ -47,67 +41,4 @@ pub fn thumbnail(painter: &egui::Painter, map: &Map, rect: Rect, t: &Tokens) {
         painter.rect_filled(r, r.height() / 3.0, Color32::from_rgb(n.color.0, n.color.1, n.color.2));
         painter.rect_stroke(r, r.height() / 3.0, Stroke::new(0.5, t.node_border), StrokeKind::Inside);
     }
-}
-
-pub fn show(app: &mut IdeaApp, ctx: &egui::Context, t: &Tokens) {
-    if !app.gallery_open {
-        return;
-    }
-    let lang = app.language.templates();
-    if app.template_previews.len() != templates::ALL.len() || app.previews_language != app.language {
-        app.template_previews = templates::ALL.iter().map(|t| t.build_in(lang)).collect();
-        app.previews_language = app.language;
-    }
-    let mut open = true;
-    let mut chosen = None;
-    egui::Window::new(app.tr("New from template")).open(&mut open).collapsible(false).default_size([760.0, 560.0]).show(ctx, |ui| {
-        ui.label(RichText::new(app.tr("Pick a starting point. Everything stays editable.")).color(t.muted));
-        ui.add_space(6.0);
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-                for (i, tpl) in templates::ALL.iter().enumerate() {
-                    let (rect, resp) = ui.allocate_exact_size(CARD, Sense::click());
-                    let hover = resp.hovered();
-                    let p = ui.painter();
-                    p.rect_filled(rect, 10.0, ui.visuals().extreme_bg_color);
-                    p.rect_stroke(
-                        rect,
-                        10.0,
-                        Stroke::new(if hover { 2.0 } else { 1.0 }, if hover { t.selection } else { t.node_border }),
-                        StrokeKind::Inside,
-                    );
-                    let thumb = Rect::from_min_size(rect.min + vec2(8.0, 8.0), vec2(CARD.x - 16.0, THUMB_H));
-                    if let Some(map) = app.template_previews.get(i) {
-                        thumbnail(p, map, thumb, t);
-                    }
-                    let text = ui.visuals().strong_text_color();
-                    p.text(
-                        pos2(rect.left() + 12.0, thumb.bottom() + 8.0),
-                        egui::Align2::LEFT_TOP,
-                        tpl.name(lang),
-                        egui::FontId::proportional(15.0),
-                        text,
-                    );
-                    p.text(
-                        pos2(rect.left() + 12.0, thumb.bottom() + 30.0),
-                        egui::Align2::LEFT_TOP,
-                        tpl.category(lang),
-                        egui::FontId::proportional(12.0),
-                        t.muted,
-                    );
-                    if resp.on_hover_text(tpl.description(lang)).clicked() {
-                        chosen = Some(tpl.id);
-                    }
-                }
-            });
-        });
-    });
-    if let Some(id) = chosen {
-        app.run("map.newFromTemplate", json!({"template": id, "language": app.language.code()}));
-        app.path = None;
-        app.view.fit_pending = true;
-        open = false;
-    }
-    app.gallery_open = open;
 }

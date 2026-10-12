@@ -28,11 +28,17 @@ never copy code from GPL/AGPL/LGPL projects (FreeMind, Freeplane, …).
 - **Everything is a command** (`crates/engine/src/cmd.rs`: id, label, menu, shortcut, params,
   undoable). The UI, the CLI and future automation call the same commands.
 - **The UI is thin**: it reads `Session` state and acts through `IdeaApp::run`; colours come
-  from `theme::Tokens`. Host-only actions (file dialogs) go through `IdeaApp::requests`.
+  from `theme::Tokens`, icons from `icons.rs` (drawn in code). Host-only actions (file dialogs,
+  downloads) go through `IdeaApp::requests`, served by `apps/ideacraft` (rfd) and
+  `apps/ideacraft-web` (browser picker, downloads).
 - Programmatic calls never open dialogs.
 
 ## Working
-- Quality gate before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers).
+- Quality gate before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers,
+  wasm). **Never break wasm**: `apps/ideacraft-web` must build for `wasm32-unknown-unknown`.
+- Rust is pinned in `rust-toolchain.toml` so local clippy and CI agree.
+- Interface strings are English in code and translated in `crates/ui-egui/src/i18n/` (add every
+  new label to `i18n::LABELS` and the Italian table); templates carry their Italian text.
 - For UI work, look at the result:
   `cargo run -p ideacraft-ui-egui --example snapshot -- --template swot out.png`.
 - Update `ROADMAP.md` (progress log) and the docs in `docs/` when work lands.

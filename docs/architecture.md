@@ -7,8 +7,9 @@
 | `crates/core` (`ideacraft-core`) | L0 | The map model: ideas (`Node`), tree parents, free links (`Edge`), colours, shapes, layouts, limits and the `.ideacraft.json` format with lenient, repairing reads. |
 | `crates/formats` (`ideacraft-formats`) | L2 | Import (FreeMind/Freeplane, XMind, CmapTools CXL, OPML, Markdown, Mermaid), export (Markdown, OPML, FreeMind) and the built-in templates. A bounded XML tree sits on `quick-xml`; XMind zips are read with `zip`. |
 | `crates/engine` (`ideacraft-engine`) | L5 | `Session` (map, selection, undo/redo) and the command catalog. `Session::execute` validates, runs, records undo and restores the map on failure or panic. |
-| `crates/ui-egui` (`ideacraft-ui-egui`) | L6 | egui front end: toolbar, canvas, template gallery, status bar; `examples/snapshot.rs` renders offscreen. |
-| `apps/ideacraft` | L7 | Desktop app (eframe), file dialogs (`rfd`), drag-and-drop. |
+| `crates/ui-egui` (`ideacraft-ui-egui`) | L6 | egui front end: top bar and status bar (`chrome.rs`), left rail and panels (`sidebar.rs`), canvas with the floating selection bar and zoom (`canvas.rs`), icons drawn in code (`icons.rs`), theme, i18n (English, Italian); `examples/snapshot.rs` renders offscreen. |
+| `apps/ideacraft` | L7 | Desktop app (eframe), file dialogs (`rfd`), drag-and-drop, saved language. |
+| `apps/ideacraft-web` | L7 | Browser app (eframe on wasm32, built with trunk): file picker, downloads, state in browser storage, `?lang=` and `?template=`. |
 | `apps/ideacraft-cli` | L7 | Headless: commands, templates, convert, outline. |
 | `xtask` | — | `cargo xtask ci` / `layers`. |
 

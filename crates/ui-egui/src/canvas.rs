@@ -204,7 +204,11 @@ fn draw(app: &IdeaApp, ui: &egui::Ui, painter: &egui::Painter, f: &Frame, laid: 
             painter.add(EShape::ellipse_stroke(r.center(), r.size() / 2.0, border));
         } else {
             let rr = radius(n.shape, r) * if n.shape == Shape::Rounded { f.zoom } else { 1.0 };
-            painter.rect_filled(r.translate(vec2(0.0, 2.0 * f.zoom)), rr, Color32::from_black_alpha(18));
+            if selected.contains(&n.id) {
+                painter.rect_filled(r.expand(5.0), rr + 5.0, t.selection.gamma_multiply(0.18));
+            }
+            painter.rect_filled(r.translate(vec2(0.0, 3.0 * f.zoom)).expand(1.0), rr, Color32::from_black_alpha(14));
+            painter.rect_filled(r.translate(vec2(0.0, 1.0 * f.zoom)), rr, Color32::from_black_alpha(16));
             painter.rect_filled(r, rr, fill(n));
             painter.rect_stroke(r, rr, border, StrokeKind::Inside);
         }
@@ -424,4 +428,114 @@ pub fn show(app: &mut IdeaApp, ui: &mut egui::Ui, t: &Tokens) {
     let laid = if app.editing.is_some() || resp.changed() { lay_out(ui, app.session.map(), &f, app.canvas.drag.as_ref(), t.text) } else { laid };
     draw(app, ui, &painter, &f, &laid, t, canvas);
     text_editor(app, ui, &laid, &f);
+    overlays(app, ui, canvas, &laid, t);
+}
+
+fn card_frame(t: &Tokens) -> egui::Frame {
+    egui::Frame::NONE
+        .fill(t.card)
+        .stroke(Stroke::new(1.0, t.border))
+        .corner_radius(12)
+        .inner_margin(egui::Margin::symmetric(6, 4))
+        .shadow(egui::epaint::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(if t.dark { 90 } else { 28 }) })
+}
+
+/// Floating controls over the canvas: the selection bar, zoom, and the empty-map invitation.
+fn overlays(app: &mut IdeaApp, ui: &egui::Ui, canvas: Rect, laid: &[Laid], t: &Tokens) {
+    use crate::icons::Icon;
+    use crate::widgets::{divider, icon_button, primary_button};
+    let ctx = ui.ctx().clone();
+    // Selection bar.
+    // Above the first selected idea (below it near the top edge), kept inside the canvas.
+    let anchor = app.session.selection().first().and_then(|id| laid.iter().find(|l| l.id == *id)).map(|l| l.rect);
+    if let (Some(r), None, None) = (anchor, &app.editing, &app.canvas.drag) {
+        let above = r.top() - 58.0 > canvas.top() + 8.0;
+        let y = if above { r.top() - 12.0 } else { r.bottom() + 12.0 };
+        let x = r.center().x.clamp(canvas.left() + 190.0, (canvas.right() - 190.0).max(canvas.left() + 190.0));
+        let pivot = if above { Align2::CENTER_BOTTOM } else { Align2::CENTER_TOP };
+        egui::Area::new(egui::Id::new("selection-bar"))
+            .order(egui::Order::Foreground)
+            .pivot(pivot)
+            .fixed_pos(pos2(x, y.clamp(canvas.top() + 8.0, canvas.bottom() - 8.0)))
+            .show(&ctx, |ui| {
+                card_frame(t).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let palette = icon_button(ui, t, Icon::Palette, app.tr("Colour"), true, false);
+                        egui::Popup::menu(&palette).show(|ui| {
+                            ui.set_max_width(170.0);
+                            crate::sidebar::swatches(app, ui, t, true, 28.0);
+                        });
+                        let shape = icon_button(ui, t, Icon::Shape, app.tr("Shape"), true, false);
+                        egui::Popup::menu(&shape).show(|ui| {
+                            for s in Shape::ALL {
+                                if ui.button(app.tr(s.name())).clicked() {
+                                    app.run("node.setShape", json!({"shape": s.name()}));
+                                    ui.close();
+                                }
+                            }
+                        });
+                        divider(ui, t);
+                        if icon_button(ui, t, Icon::Child, &app.tip("node.addChild"), true, false).clicked() {
+                            app.run_and_edit("node.addChild", json!({}));
+                        }
+                        if icon_button(ui, t, Icon::Sibling, &app.tip("node.addSibling"), true, false).clicked() {
+                            app.run_and_edit("node.addSibling", json!({}));
+                        }
+                        if icon_button(ui, t, Icon::Collapse, &app.tip("node.toggleCollapse"), true, false).clicked() {
+                            app.run("node.toggleCollapse", json!({}));
+                        }
+                        let link_tip = app.tr("Drag from one idea to another to link them (or hold Shift while dragging)").to_string();
+                        if icon_button(ui, t, Icon::Link, &link_tip, true, app.link_mode).clicked() {
+                            app.link_mode = !app.link_mode;
+                        }
+                        divider(ui, t);
+                        if icon_button(ui, t, Icon::Trash, &app.tip("node.delete"), true, false).clicked() {
+                            app.run("node.delete", json!({}));
+                        }
+                    });
+                });
+            });
+    }
+    // Zoom.
+    egui::Area::new(egui::Id::new("zoom-bar"))
+        .order(egui::Order::Foreground)
+        .pivot(Align2::RIGHT_BOTTOM)
+        .fixed_pos(canvas.right_bottom() - vec2(14.0, 14.0))
+        .show(&ctx, |ui| {
+            card_frame(t).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let zoom = |app: &mut IdeaApp, k: f32| app.view.zoom = (app.view.zoom * k).clamp(MIN_ZOOM, MAX_ZOOM);
+                    if icon_button(ui, t, Icon::ZoomOut, app.tr("Zoom out"), true, false).clicked() {
+                        zoom(app, 1.0 / 1.2);
+                    }
+                    ui.label(egui::RichText::new(format!("{:.0}%", app.view.zoom * 100.0)).color(t.ui_text).small());
+                    if icon_button(ui, t, Icon::ZoomIn, app.tr("Zoom in"), true, false).clicked() {
+                        zoom(app, 1.2);
+                    }
+                    if icon_button(ui, t, Icon::Fit, app.tr("Fit to window"), true, false).clicked() {
+                        app.view.fit_pending = true;
+                    }
+                });
+            });
+        });
+    // Empty map.
+    if app.session.map().node_count() == 0 && app.editing.is_none() {
+        egui::Area::new(egui::Id::new("empty-map")).order(egui::Order::Middle).pivot(Align2::CENTER_CENTER).fixed_pos(canvas.center()).show(
+            &ctx,
+            |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(app.tr("Double-click anywhere to add an idea")).size(18.0).color(t.muted))
+                            .selectable(false),
+                    );
+                    ui.add_space(6.0);
+                    ui.add(egui::Label::new(egui::RichText::new(app.tr("or start from a template")).color(t.muted)).selectable(false));
+                    ui.add_space(10.0);
+                    if primary_button(ui, t, Some(Icon::Templates), app.tr("Choose a template")).clicked() {
+                        app.sidebar = Some(crate::SidePanel::Templates);
+                    }
+                });
+            },
+        );
+    }
 }

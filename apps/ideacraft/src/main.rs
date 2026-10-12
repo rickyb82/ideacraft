@@ -9,7 +9,8 @@ use ideacraft_ui_egui::core::Map;
 use ideacraft_ui_egui::{IdeaApp, Language, Request};
 use serde_json::json;
 
-struct App(IdeaApp);
+/// The app and the preferences last written to `ui.json`.
+struct App(IdeaApp, (Language, bool));
 
 impl App {
     /// File dialogs requested by the UI.
@@ -52,14 +53,16 @@ impl eframe::App for App {
             }
         }
     }
-    fn on_exit(&mut self) {
-        save_language(self.0.language);
-    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let title = self.0.window_title();
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(title));
         self.0.ui(ui);
         self.serve_requests();
+        let prefs = (self.0.language, self.0.dark);
+        if prefs != self.1 {
+            save_prefs(prefs.0, prefs.1);
+            self.1 = prefs;
+        }
     }
 }
 
@@ -80,24 +83,25 @@ fn config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-/// The saved interface language, if any (`ui.json`: `{"language": "it"}`).
-fn saved_language() -> Option<Language> {
+/// Saved preferences (`ui.json`: `{"language": "it", "dark": false}`).
+fn saved_prefs() -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(config_dir()?.join("ui.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v.get("language").and_then(serde_json::Value::as_str).and_then(Language::parse)
+    serde_json::from_str(&text).ok()
 }
 
-fn save_language(language: Language) {
+fn save_prefs(language: Language, dark: bool) {
     if let Some(dir) = config_dir() {
         let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join("ui.json"), json!({"language": language.code()}).to_string());
+        let _ = std::fs::write(dir.join("ui.json"), json!({"language": language.code(), "dark": dark}).to_string());
     }
 }
 
 fn main() -> eframe::Result {
     let mut app = IdeaApp::default();
     // The saved language, else the system's on first run.
-    app.language = saved_language().unwrap_or_else(Language::system);
+    let prefs = saved_prefs();
+    app.language = prefs.as_ref().and_then(|p| p.get("language")?.as_str().and_then(Language::parse)).unwrap_or_else(Language::system);
+    app.dark = prefs.as_ref().and_then(|p| p.get("dark")?.as_bool()).unwrap_or(false);
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(i) = args.iter().position(|a| a == "--lang") {
         if let Some(l) = args.get(i + 1).and_then(|c| Language::parse(c)) {
@@ -132,11 +136,12 @@ fn main() -> eframe::Result {
     // A fresh start offers the templates, on an empty map titled in the interface language.
     if !opened {
         app.new_map();
+        app.sidebar = Some(ideacraft_ui_egui::SidePanel::Templates);
     }
-    app.gallery_open = !opened;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("IdeaCraft").with_inner_size([1280.0, 800.0]).with_min_inner_size([640.0, 400.0]),
         ..Default::default()
     };
-    eframe::run_native("IdeaCraft", options, Box::new(|_cc| Ok(Box::new(App(app)))))
+    let prefs = (app.language, app.dark);
+    eframe::run_native("IdeaCraft", options, Box::new(move |_cc| Ok(Box::new(App(app, prefs)))))
 }

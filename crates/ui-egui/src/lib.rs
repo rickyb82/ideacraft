@@ -3,10 +3,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod canvas;
+mod chrome;
 mod gallery;
 pub mod i18n;
+pub mod icons;
+mod sidebar;
 pub mod theme;
-mod toolbar;
+mod widgets;
 
 use ideacraft_engine::Session;
 use ideacraft_engine::core::{Map, NodeId};
@@ -32,12 +35,27 @@ pub struct IdeaApp {
     pub status: String,
     /// Interface language (also used for new maps from templates).
     pub language: Language,
-    /// The template gallery is showing.
-    pub gallery_open: bool,
+    /// Dark theme.
+    pub dark: bool,
+    /// The theme last applied to egui.
+    applied_dark: Option<bool>,
+    /// The open side panel, if any.
+    pub sidebar: Option<SidePanel>,
+    /// A template waiting for "replace the current map?".
+    confirm_template: Option<&'static str>,
     template_previews: Vec<Map>,
     previews_language: Language,
     /// File dialogs the host should show (the UI crate has no file-dialog dependency).
     pub requests: Vec<Request>,
+}
+
+/// The panels of the left rail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidePanel {
+    Templates,
+    Elements,
+    Layout,
+    Files,
 }
 
 /// Something only the host app can do.
@@ -106,7 +124,10 @@ impl IdeaApp {
             link_mode: false,
             status: String::new(),
             language: Language::En,
-            gallery_open: false,
+            dark: false,
+            applied_dark: None,
+            sidebar: None,
+            confirm_template: None,
             template_previews: Vec::new(),
             previews_language: Language::En,
             requests: Vec::new(),
@@ -141,6 +162,55 @@ impl IdeaApp {
     /// Translates an interface label into the current language.
     pub fn tr<'a>(&self, text: &'a str) -> &'a str {
         self.language.tr(text)
+    }
+
+    /// A command's translated label and shortcut, for tooltips.
+    pub fn tip(&self, command: &str) -> String {
+        match ideacraft_engine::command(command) {
+            Some(c) if !c.shortcut.is_empty() => format!("{} ({})", self.tr(c.label), c.shortcut),
+            Some(c) => self.tr(c.label).to_string(),
+            None => command.to_string(),
+        }
+    }
+
+    /// Saves where the map came from, or asks the host where (Save As).
+    pub fn save_or_ask(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.path.is_some() {
+            self.save();
+            return;
+        }
+        self.requests.push(Request::SaveAs);
+    }
+
+    /// Replaces the map with a template in the interface language.
+    pub fn apply_template(&mut self, id: &str) {
+        self.commit_edit();
+        if self.run("map.newFromTemplate", json!({"template": id, "language": self.language.code()})).is_some() {
+            self.path = None;
+            self.view.fit_pending = true;
+        }
+    }
+
+    /// The map as text in an export format (or IdeaCraft JSON with `None`), with a file name.
+    pub fn export_text(&mut self, format: Option<ExportFormat>) -> Option<(String, String)> {
+        self.commit_edit();
+        let stem: String = self
+            .session
+            .map()
+            .title()
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '-' })
+            .take(80)
+            .collect();
+        let stem = if stem.trim().is_empty() { "map".to_string() } else { stem.trim().to_string() };
+        match format {
+            None => Some((format!("{stem}.ideacraft.json"), self.session.map().to_json())),
+            Some(f) => {
+                let text = self.run("map.export", json!({"format": f.command_format()})).and_then(|v| v["text"].as_str().map(str::to_string))?;
+                Some((format!("{stem}.{}", f.extension()), text))
+            }
+        }
     }
 
     /// Starts a new empty map, titled in the interface language.
@@ -269,11 +339,15 @@ impl IdeaApp {
 
     /// Draws one frame.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        let tokens = theme::Tokens::for_dark_mode(ui.visuals().dark_mode);
+        let tokens = theme::Tokens::for_dark_mode(self.dark);
+        if self.applied_dark != Some(self.dark) {
+            theme::apply(ui.ctx(), &tokens);
+            self.applied_dark = Some(self.dark);
+        }
         canvas::keyboard(self, ui);
-        toolbar::top(self, ui);
-        toolbar::status(self, ui, &tokens);
-        gallery::show(self, &ui.ctx().clone(), &tokens);
+        chrome::top_bar(self, ui, &tokens);
+        chrome::status_bar(self, ui, &tokens);
+        sidebar::show(self, ui, &tokens);
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(tokens.canvas)).show(ui, |ui| canvas::show(self, ui, &tokens));
     }
 }
@@ -339,7 +413,7 @@ mod tests {
     #[test]
     fn template_gallery_renders_and_open_bytes_imports() {
         let ctx = egui::Context::default();
-        let mut app = IdeaApp { gallery_open: true, ..IdeaApp::default() };
+        let mut app = IdeaApp { sidebar: Some(SidePanel::Templates), ..IdeaApp::default() };
         frame(&mut app, &ctx, vec![]);
         frame(&mut app, &ctx, vec![]);
         assert_eq!(app.template_previews.len(), ideacraft_engine::formats::templates::ALL.len());
@@ -352,7 +426,7 @@ mod tests {
     #[test]
     fn italian_interface_and_templates() {
         let ctx = egui::Context::default();
-        let mut app = IdeaApp { gallery_open: true, ..IdeaApp::default() };
+        let mut app = IdeaApp { sidebar: Some(SidePanel::Templates), ..IdeaApp::default() };
         assert!(app.run("app.language.set", json!({"language": "it"})).is_some());
         assert_eq!(app.language, Language::It);
         assert!(app.run("app.language.set", json!({"language": "xx"})).is_none());
