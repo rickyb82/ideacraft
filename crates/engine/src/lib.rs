@@ -200,7 +200,11 @@ mod tests {
             .unwrap();
         assert_eq!(s.map().mode(), ideacraft_core::Mode::Diagram);
         assert_eq!(s.map().node(NodeId(r)).unwrap().props.get("ip").map(String::as_str), Some("10.0.0.1"));
-        let sw = s.execute("node.addShape", &json!({"kind": "net.switch", "x": 300, "y": 0})).unwrap()["id"].as_u64().unwrap();
+        let sw = s.execute("node.addShape", &json!({"kind": "net.switch", "x": 300, "y": 0, "language": "it"})).unwrap()["id"].as_u64().unwrap();
+        assert_eq!(s.map().node(NodeId(sw)).unwrap().label, "Switch");
+        let pt = s.execute("node.addShape", &json!({"kind": "net.printer", "language": "it"})).unwrap()["id"].as_u64().unwrap();
+        assert_eq!(s.map().node(NodeId(pt)).unwrap().label, "Stampante");
+        s.execute("node.delete", &json!({"id": pt})).unwrap();
         let pc = s.execute("node.addShape", &json!({"kind": "net.pc", "x": 600, "y": 50})).unwrap()["id"].as_u64().unwrap();
         assert!(s.execute("node.addShape", &json!({"kind": "net.nope"})).is_err());
         let e = s.execute("edge.add", &json!({"from": r, "to": sw, "label": "1G"})).unwrap()["id"].as_u64().unwrap();

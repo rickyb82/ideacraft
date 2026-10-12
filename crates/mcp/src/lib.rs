@@ -95,7 +95,7 @@ fn tools() -> Value {
         {"name": "list_stencils", "description": "The shape library for diagrams: id, name, category (basic shapes, flowchart, network, cloud & servers, people & places), shape and default size.",
          "inputSchema": {"type": "object", "properties": {"language": language, "category": {"type": "string", "description": "Filter: basic, flowchart, network, cloud, people"}}}},
         {"name": "add_shape", "description": "Add a diagram shape from a stencil (see list_stencils), e.g. net.router, flow.decision, basic.container. Positions are map units (centre); shapes are about 110×90. Switches the map to diagram mode. Returns the id.",
-         "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}, "label": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
+         "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}, "label": {"type": "string"}, "language": language, "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
              "props": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Properties such as ip, vlan, model, owner, status (up|warning|down shows a light)"}}, "required": ["kind"]}},
         {"name": "style_link", "description": "Style a link: line solid|dashed|dotted, arrows none|end|start|both, route straight|orthogonal|curved, colour #rrggbb (null for default), width in px, and a new label.",
          "inputSchema": {"type": "object", "properties": {"id": id, "line": {"type": "string", "enum": ["solid", "dashed", "dotted"]}, "arrows": {"type": "string", "enum": ["none", "end", "start", "both"]},
@@ -264,7 +264,7 @@ impl Server {
             }
             "add_shape" => {
                 let mut params = json!({"kind": str_arg(args, "kind").ok_or("`kind` is required")?});
-                for key in ["label", "x", "y", "props"] {
+                for key in ["label", "x", "y", "props", "language"] {
                     if let Some(v) = args.get(key).filter(|v| !v.is_null()) {
                         params[key] = v.clone();
                     }

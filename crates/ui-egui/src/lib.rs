@@ -170,7 +170,7 @@ impl IdeaApp {
         let centre = -self.view.pan / self.view.zoom;
         let x = ((centre.x + step) / canvas::GRID).round() * canvas::GRID;
         let y = ((centre.y + step) / canvas::GRID).round() * canvas::GRID;
-        if self.run("node.addShape", json!({"kind": kind, "x": x, "y": y})).is_some() {
+        if self.run("node.addShape", json!({"kind": kind, "x": x, "y": y, "language": self.language.code()})).is_some() {
             self.added_at_center = (self.added_at_center + 1) % 8;
         }
     }

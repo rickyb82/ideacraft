@@ -53,7 +53,14 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("map.setMode", "Map / Diagram Mode", "View › Mode", "", "{mode: map|diagram}", true),
     c("map.stencils", "Shape Library", "Insert › Shape", "", "{language?: en|it} → [{id, name, category, shape, w, h}]", false),
     c("node.add", "Add Idea", "Insert › Idea", "", "{label?, x?, y?, parent?, kind?: stencil id, w?, h?} → {id}", true),
-    c("node.addShape", "Add Shape", "Insert › Shape", "", "{kind: stencil id (map.stencils), label?, x?, y?, props?: {k: v}} → {id}", true),
+    c(
+        "node.addShape",
+        "Add Shape",
+        "Insert › Shape",
+        "",
+        "{kind: stencil id (map.stencils), label?, x?, y?, props?: {k: v}, language?: en|it (default label)} → {id}",
+        true,
+    ),
     c("node.addChild", "Add Child Idea", "Insert › Child", "Tab", "{id?, label?} (default: the selection) → {id}", true),
     c("node.addSibling", "Add Sibling Idea", "Insert › Sibling", "Enter", "{id?, label?} → {id}", true),
     c("node.delete", "Delete", "Edit › Delete", "Delete", "{id? | ids?} (removes the whole branch)", true),
@@ -266,7 +273,8 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
                 let low = s.map.nodes().map(|n| n.pos.y + n.size.map_or(60.0, |sz| sz.h / 2.0)).fold(0.0, f32::max);
                 Point::new(0.0, if s.map.node_count() == 0 { 0.0 } else { low + st.size.h / 2.0 + 40.0 })
             });
-            let new = s.map.add_stencil(st, p::opt_str(prm, "label")?, pos)?;
+            let default_label = st.name(language(prm)? == Lang::It);
+            let new = s.map.add_stencil(st, Some(p::opt_str(prm, "label")?.unwrap_or(default_label)), pos)?;
             set_props(s, new, prm)?;
             s.map.set_mode(Mode::Diagram);
             Ok(added(s, new))
