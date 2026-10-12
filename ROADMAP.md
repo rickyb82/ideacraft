@@ -46,3 +46,4 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 | 2026-10-12 | 0.1: skeleton, canvas, layouts, 12 templates, 6 import formats, 3 export formats, CLI |
 | 2026-10-12 | Italian interface and templates; new canvas-tool interface; web app on GitHub Pages |
 | 2026-10-12 | MCP server for AI agents (16 tools); SVG export; automatic branch colours |
+| 2026-10-12 | MCP: `--in FILE`, saving back to .mm/.opml/.md files in their format, resources, tool aliases |

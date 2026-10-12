@@ -6,7 +6,7 @@
 //! ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
 //! ideacraft-cli convert IN OUT                             # import/export by extension
 //! ideacraft-cli outline FILE                               # Markdown outline on stdout
-//! ideacraft-cli mcp                                        # MCP server on stdio, for AI agents
+//! ideacraft-cli mcp [--in FILE]                            # MCP server on stdio, for AI agents
 //! ```
 //! `--in` and `convert` read IdeaCraft maps and every importable format (FreeMind/Freeplane,
 //! XMind, CmapTools CXL, OPML, Markdown, Mermaid); `--out`/`convert` write by extension:
@@ -26,7 +26,7 @@ const USAGE: &str = "usage:
   ideacraft-cli run [--in FILE | --sample | --template ID] [--cmd 'id={json}']… [--out FILE]
   ideacraft-cli convert IN OUT
   ideacraft-cli outline FILE
-  ideacraft-cli mcp            (Model Context Protocol server on stdio)";
+  ideacraft-cli mcp [--in FILE | FILE] [--template ID]   (Model Context Protocol server on stdio)";
 
 fn read(path: &str) -> Result<Map, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
@@ -68,8 +68,31 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("mcp") => {
+            let mut server = ideacraft_mcp::Server::new();
+            let mut it = args.iter().skip(1);
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--in" | "--open" | "--file" => {
+                        let path = it.next().ok_or("--in needs a file")?;
+                        server.open_file(path).map_err(|e| format!("mcp: {e}"))?;
+                    }
+                    "--sample" => {
+                        let id = it.next().map_or("brainstorm", String::as_str);
+                        server.call("new_map", &json!({"template": id})).map_err(|e| format!("mcp: {e}"))?;
+                    }
+                    "--template" => {
+                        let id = it.next().ok_or("--template needs an id (see `ideacraft-cli templates`)")?;
+                        server.call("new_map", &json!({"template": id})).map_err(|e| format!("mcp: {e}"))?;
+                    }
+                    other if !other.starts_with('-') => {
+                        server.open_file(other).map_err(|e| format!("mcp: {e}"))?;
+                    }
+                    other => return Err(format!("mcp: unknown option {other}\n{USAGE}")),
+                }
+            }
+            eprintln!("ideacraft-cli: MCP server on stdio (protocol {}); close stdin to stop", ideacraft_mcp::PROTOCOL_VERSION);
             let stdin = std::io::stdin();
-            ideacraft_mcp::Server::new().serve(stdin.lock(), std::io::stdout()).map_err(|e| format!("mcp: {e}"))
+            server.serve(stdin.lock(), std::io::stdout()).map_err(|e| format!("mcp: {e}"))
         }
         Some("outline") => {
             let path = args.get(1).ok_or(USAGE)?;

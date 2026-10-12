@@ -88,6 +88,10 @@ pub fn to_freemind(map: &Map) -> String {
     let node = |id: NodeId, out: &mut String| {
         let Some(n) = map.node(id) else { return };
         out.push_str(&format!("<node ID=\"ID_{}\" TEXT=\"{}\" BACKGROUND_COLOR=\"{}\"", n.id.0, escape(&n.label), n.color.hex()));
+        // Main branches say which side of the root they are on, as FreeMind expects.
+        if let Some(root) = n.parent.and_then(|p| map.node(p)).filter(|p| p.parent.is_none()) {
+            out.push_str(if n.pos.x < root.pos.x { " POSITION=\"left\"" } else { " POSITION=\"right\"" });
+        }
         if n.collapsed {
             out.push_str(" FOLDED=\"true\"");
         }

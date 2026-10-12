@@ -12,8 +12,14 @@ use ideacraft_engine::formats::{self, templates};
 use ideacraft_engine::{COMMANDS, Session};
 use serde_json::{Value, json};
 
-/// MCP protocol revision this server implements.
+/// MCP protocol revision this server prefers.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
+/// Revisions it also speaks; a client asking for another gets [`PROTOCOL_VERSION`].
+pub const SUPPORTED_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+/// The open map as an outline with ids (`resources/read`).
+pub const MAP_URI: &str = "ideacraft://map";
+/// The open map as IdeaCraft JSON (`resources/read`).
+pub const MAP_JSON_URI: &str = "ideacraft://map.json";
 /// Longest request line read (bytes); longer lines are answered with an error.
 const MAX_LINE: usize = 32 * 1024 * 1024;
 
@@ -22,11 +28,27 @@ with add_idea/add_ideas (children hang under a parent id), connect any two ideas
 rearrange with layout, and read the result with get_map (an outline with ids) or export (svg to look at it). Save with save_map. \
 run_command reaches every engine command (list_commands), including edit.undo and edit.redo.";
 
-/// The server: one open map.
+/// The server: one open map, and the file it came from (path and the format it is saved in).
 #[derive(Default)]
 pub struct Server {
     session: Session,
-    path: Option<String>,
+    file: Option<(String, &'static str)>,
+}
+
+/// The format a file name asks for when saving: `ideacraft`, `markdown`, `opml`, `freemind` or `svg`.
+fn format_for_path(path: &str) -> Option<&'static str> {
+    let lower = path.to_ascii_lowercase();
+    let by_ext = [
+        (".ideacraft.json", "ideacraft"),
+        (".json", "ideacraft"),
+        (".md", "markdown"),
+        (".markdown", "markdown"),
+        (".txt", "markdown"),
+        (".opml", "opml"),
+        (".mm", "freemind"),
+        (".svg", "svg"),
+    ];
+    by_ext.iter().find(|(e, _)| lower.ends_with(e)).map(|(_, f)| *f)
 }
 
 type ToolResult = Result<Value, String>;
@@ -42,11 +64,11 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"language": language}}},
         {"name": "new_map", "description": "Start a new map, empty or from a template. Replaces the open map.",
          "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "template": {"type": "string", "enum": template_ids}, "language": language}}},
-        {"name": "open_map", "description": "Open a file: an IdeaCraft map or an import (FreeMind/Freeplane .mm, XMind .xmind, CmapTools .cxl, OPML, Markdown, Mermaid).",
+        {"name": "open_map", "description": "Open a file: an IdeaCraft map or an import (FreeMind/Freeplane .mm, XMind .xmind, CmapTools .cxl, OPML, Markdown, Mermaid). .ideacraft.json, .mm, .opml and .md files are saved back in their own format.",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
         {"name": "import_text", "description": "Replace the map with text in another format (Markdown outline, OPML, FreeMind XML, Mermaid mindmap/flowchart, CXL, XMind content.json). The format is detected when omitted.",
          "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "format": {"type": "string", "enum": ["md", "opml", "mm", "mermaid", "cxl", "xmind", "ideacraft"]}}, "required": ["text"]}},
-        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .svg) unless given. Without path, saves where it was opened or last saved.",
+        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .svg) unless given. Without path, saves back to the file it was opened from (a .mm stays FreeMind, an .opml stays OPML) or last saved to.",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "format": {"type": "string", "enum": ["ideacraft", "markdown", "opml", "freemind", "svg"]}}}},
         {"name": "get_map", "description": "Read the map: title, counts, an outline with each idea's [id], and the links. format=json returns the full IdeaCraft JSON (positions, colours).",
          "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["outline", "json"]}}}},
@@ -150,16 +172,13 @@ impl Server {
                 } else {
                     self.exec("map.new", json!({"title": str_arg(args, "title").unwrap_or("Untitled map")}))?;
                 }
-                self.path = None;
+                self.file = None;
                 Ok(json!({"outline": outline(self.map())}))
             }
-            "open_map" => {
-                let path = str_arg(args, "path").ok_or("`path` is required")?;
-                let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-                let (map, format) = formats::import_bytes(path, &bytes).map_err(|e| format!("{path}: {e}"))?;
-                self.session.replace_map(map);
-                self.path = (format == formats::Format::IdeaCraft).then(|| path.to_string());
-                Ok(json!({"format": format.name(), "outline": outline(self.map())}))
+            "open_map" | "open" | "open_file" | "open_document" => {
+                let path = str_arg(args, "path").or_else(|| str_arg(args, "file")).ok_or("`path` is required")?;
+                let format = self.open_file(path)?;
+                Ok(json!({"format": format, "path": path, "saves_back": self.file.is_some(), "outline": outline(self.map())}))
             }
             "import_text" => {
                 let text = str_arg(args, "text").ok_or("`text` is required")?;
@@ -168,22 +187,25 @@ impl Server {
                     params["format"] = json!(f);
                 }
                 let r = self.exec("map.importText", params)?;
-                self.path = None;
+                self.file = None;
                 Ok(json!({"format": r["format"], "outline": outline(self.map())}))
             }
-            "save_map" => {
-                let path =
-                    str_arg(args, "path").map(str::to_string).or_else(|| self.path.clone()).ok_or("`path` is required (the map was never saved)")?;
-                let lower = path.to_ascii_lowercase();
-                let format = str_arg(args, "format").map(str::to_string).unwrap_or_else(|| {
-                    let by_ext = [(".md", "markdown"), (".markdown", "markdown"), (".opml", "opml"), (".mm", "freemind"), (".svg", "svg")];
-                    by_ext.iter().find(|(e, _)| lower.ends_with(e)).map_or("ideacraft", |(_, f)| f).to_string()
-                });
+            "save_map" | "save" | "save_file" | "save_document" => {
+                let (path, source_format) = match str_arg(args, "path").or_else(|| str_arg(args, "file")) {
+                    Some(p) => (p.to_string(), None),
+                    None => self.file.clone().map(|(p, f)| (p, Some(f))).ok_or("`path` is required (the map has no file to save back to)")?,
+                };
+                let format = match str_arg(args, "format") {
+                    Some(f) => f.to_string(),
+                    None => source_format.or_else(|| format_for_path(&path)).unwrap_or("ideacraft").to_string(),
+                };
                 let text = self.render(&format)?;
                 std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))?;
-                if format == "ideacraft" {
+                if format != "svg" {
                     self.session.mark_saved();
-                    self.path = Some(path.clone());
+                    if let Some(f) = format_for_path(&path).filter(|f| *f == format.as_str() || (format == "json" && *f == "ideacraft")) {
+                        self.file = Some((path.clone(), f));
+                    }
                 }
                 Ok(json!({"saved": path, "format": format}))
             }
@@ -254,6 +276,27 @@ impl Server {
         }
     }
 
+    /// Opens a map or imports a file. Maps, FreeMind/Freeplane, OPML and Markdown files are then
+    /// saved back to the same file in the same format; other imports need a path to save.
+    pub fn open_file(&mut self, path: &str) -> Result<&'static str, String> {
+        let len = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?.len();
+        if len > formats::MAX_FILE_BYTES as u64 {
+            return Err(format!("{path}: larger than {} MB", formats::MAX_FILE_BYTES / (1024 * 1024)));
+        }
+        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let (map, format) = formats::import_bytes(path, &bytes).map_err(|e| format!("{path}: {e}"))?;
+        self.session.replace_map(map);
+        let saves_as = match format {
+            formats::Format::IdeaCraft => Some("ideacraft"),
+            formats::Format::FreeMind => Some("freemind"),
+            formats::Format::Opml => Some("opml"),
+            formats::Format::Markdown => Some("markdown"),
+            _ => None,
+        };
+        self.file = saves_as.map(|f| (path.to_string(), f));
+        Ok(format.name())
+    }
+
     fn style(&mut self, id: u64, args: &Value) -> Result<(), String> {
         if let Some(c) = str_arg(args, "color") {
             self.exec("node.setColor", json!({"id": id, "color": c}))?;
@@ -271,8 +314,8 @@ impl Server {
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         let result = match method {
             "initialize" => Ok(json!({
-                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION),
-                "capabilities": {"tools": {"listChanged": false}},
+                "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).filter(|v| SUPPORTED_VERSIONS.contains(v)).unwrap_or(PROTOCOL_VERSION),
+                "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}},
                 "serverInfo": {"name": "ideacraft", "title": "IdeaCraft", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": INSTRUCTIONS,
             })),
@@ -295,7 +338,16 @@ impl Server {
                     Err(e) => json!({"content": [{"type": "text", "text": e}], "isError": true}),
                 })
             }
-            "resources/list" => Ok(json!({"resources": []})),
+            "resources/list" => Ok(json!({"resources": [
+                {"uri": MAP_URI, "name": "map", "title": "Open map (outline)", "description": "Title, ideas with their [id] and links", "mimeType": "text/markdown"},
+                {"uri": MAP_JSON_URI, "name": "map.json", "title": "Open map (IdeaCraft JSON)", "description": "The full map: positions, colours, shapes, links", "mimeType": "application/json"},
+            ]})),
+            "resources/templates/list" => Ok(json!({"resourceTemplates": []})),
+            "resources/read" => match params.get("uri").and_then(Value::as_str) {
+                Some(MAP_URI) => Ok(json!({"contents": [{"uri": MAP_URI, "mimeType": "text/markdown", "text": outline(self.map())}]})),
+                Some(MAP_JSON_URI) => Ok(json!({"contents": [{"uri": MAP_JSON_URI, "mimeType": "application/json", "text": self.map().to_json()}]})),
+                _ => Err((-32002, "resource not found".to_string())),
+            },
             "prompts/list" => Ok(json!({"prompts": []})),
             _ => Err((-32601, format!("method not found: {}", method.chars().take(64).collect::<String>()))),
         };
@@ -412,6 +464,34 @@ mod tests {
             assert_eq!(r["result"]["isError"], true, "{name} should fail cleanly: {r}");
         }
         assert_eq!(s.map().node_count(), 3, "failed tools change nothing");
+    }
+
+    #[test]
+    fn opml_and_freemind_files_open_edit_and_save_back_in_their_format() {
+        let dir = std::env::temp_dir().join(format!("ideacraft-mcp-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mm = dir.join("timeline.mm");
+        std::fs::write(&mm, "<map version=\"1.0.1\">\n<node TEXT=\"Company 2007 → today\">\n<node TEXT=\"2007 · Start\" POSITION=\"right\">\n<node TEXT=\"Founded\"/>\n</node>\n<node TEXT=\"2008-2010\" POSITION=\"left\"/>\n</node>\n</map>\n").unwrap();
+        let opml = dir.join("timeline.opml");
+        std::fs::write(&opml, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\"><head><title>Timeline</title></head><body>\n<outline text=\"Company\"><outline text=\"2007\"/></outline></body></opml>").unwrap();
+        for (path, root_label) in [(&mm, "Company 2007 → today"), (&opml, "Company")] {
+            let mut s = Server::new();
+            let opened = call(&mut s, "open_file", json!({"path": path.to_str().unwrap()}));
+            assert_eq!(opened["saves_back"], true);
+            let root = s.map().roots()[0];
+            assert_eq!(s.map().node(root).unwrap().label, root_label);
+            call(&mut s, "add_idea", json!({"label": "Added by an agent", "parent": root.0}));
+            call(&mut s, "save", json!({}));
+            let mut t = Server::new();
+            t.open_file(path.to_str().unwrap()).unwrap();
+            assert!(t.map().nodes().any(|n| n.label == "Added by an agent"), "{path:?} saved back");
+            let text = std::fs::read_to_string(path).unwrap();
+            let expected = if path.extension().unwrap() == "mm" { "<map" } else { "<opml" };
+            assert!(text.trim_start().starts_with(expected) || text.contains(expected), "{path:?} keeps its format");
+        }
+        let res = Server::new().handle(&json!({"jsonrpc": "2.0", "id": 9, "method": "resources/read", "params": {"uri": MAP_URI}})).unwrap();
+        assert!(res["result"]["contents"][0]["text"].as_str().unwrap().starts_with("# "));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -21,6 +21,16 @@ Claude Desktop (`claude_desktop_config.json`):
 { "mcpServers": { "ideacraft": { "command": "ideacraft-cli", "args": ["mcp"] } } }
 ```
 
+Start with a file, as with the other craft apps (`gridcraft-cli mcp --in …`):
+
+```sh
+ideacraft-cli mcp --in timeline.mm        # or an .opml, .md, .ideacraft.json, .xmind, .cxl …
+```
+
+`.ideacraft.json`, FreeMind/Freeplane `.mm`, `.opml` and `.md` files are **saved back in their
+own format**: `save_map` without a path rewrites the file that was opened. XMind, CmapTools and
+Mermaid files are read only; give `save_map` a path to save them.
+
 Then ask, for example: *"Make a concept map of the water cycle in Italian, with labelled links
 between the stages, lay it out radially and save it as ciclo.ideacraft.json and ciclo.svg."*
 
@@ -30,9 +40,9 @@ between the stages, lay it out radially and save it as ciclo.ideacraft.json and 
 |---|---|
 | `list_templates` | The built-in templates (`language`: en, it) |
 | `new_map` | New empty map, or from a `template` (with `language`, optional `title`) |
-| `open_map` | Open an IdeaCraft map or import FreeMind/Freeplane, XMind, CmapTools CXL, OPML, Markdown, Mermaid |
+| `open_map` (also `open`, `open_file`) | Open an IdeaCraft map or import FreeMind/Freeplane, XMind, CmapTools CXL, OPML, Markdown, Mermaid |
 | `import_text` | Replace the map with text in any importable format (detected when `format` is omitted) |
-| `save_map` | Save; the format follows the extension (`.ideacraft.json`, `.md`, `.opml`, `.mm`, `.svg`) |
+| `save_map` (also `save`, `save_file`) | Save; without a path, back to the opened file in its format; otherwise the extension decides (`.ideacraft.json`, `.md`, `.opml`, `.mm`, `.svg`) |
 | `get_map` | Outline with each idea's `[id]` and the links, or the full JSON |
 | `add_idea` / `add_ideas` | Add one idea (with colour, shape) or several children under a parent |
 | `update_idea` | Text, colour, shape, collapsed, or move under another parent |
@@ -41,6 +51,9 @@ between the stages, lay it out radially and save it as ciclo.ideacraft.json and 
 | `layout` | `tree` or `radial` |
 | `export` | `markdown`, `opml`, `freemind`, `svg` (a picture of the map) or `ideacraft` JSON |
 | `list_commands` / `run_command` | Every engine command, e.g. `edit.undo`, `node.moveBy` |
+
+Resources: `ideacraft://map` (the outline with ids, Markdown) and `ideacraft://map.json` (the
+full map). Protocol revisions 2025-06-18, 2025-03-26 and 2024-11-05 are accepted.
 
 Ids are positive integers shown as `[id]` by `get_map`. Main branches get their own colour
 automatically; deeper ideas take their branch's colour.
