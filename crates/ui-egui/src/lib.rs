@@ -4,6 +4,7 @@
 
 mod canvas;
 mod gallery;
+pub mod i18n;
 pub mod theme;
 mod toolbar;
 
@@ -13,6 +14,7 @@ use serde_json::{Value, json};
 
 pub use canvas::View;
 pub use gallery::thumbnail;
+pub use i18n::Language;
 pub use ideacraft_engine::{core, formats};
 
 /// The whole app state the UI keeps on top of the engine session.
@@ -28,9 +30,12 @@ pub struct IdeaApp {
     /// Drag from node to node draws a link instead of moving.
     pub link_mode: bool,
     pub status: String,
+    /// Interface language (also used for new maps from templates).
+    pub language: Language,
     /// The template gallery is showing.
     pub gallery_open: bool,
     template_previews: Vec<Map>,
+    previews_language: Language,
     /// File dialogs the host should show (the UI crate has no file-dialog dependency).
     pub requests: Vec<Request>,
 }
@@ -58,6 +63,7 @@ impl ExportFormat {
 
     pub const fn label(self) -> &'static str {
         match self {
+            // Translated with `Language::tr` where shown.
             Self::Markdown => "Markdown outline (.md)",
             Self::Opml => "OPML (.opml)",
             Self::FreeMind => "FreeMind / Freeplane (.mm)",
@@ -99,21 +105,50 @@ impl IdeaApp {
             title_draft: None,
             link_mode: false,
             status: String::new(),
+            language: Language::En,
             gallery_open: false,
             template_previews: Vec::new(),
+            previews_language: Language::En,
             requests: Vec::new(),
         }
     }
 
-    /// Runs an engine command; failures go to the status bar.
+    /// Runs a command: the UI's own (`app.language.set`) or an engine command. Failures go to
+    /// the status bar.
     pub fn run(&mut self, id: &str, params: Value) -> Option<Value> {
+        if id == "app.language.set" {
+            let code = params.get("language").or_else(|| params.get("code")).and_then(Value::as_str).unwrap_or_default();
+            return match Language::parse(code) {
+                Some(l) => {
+                    self.language = l;
+                    Some(json!({}))
+                }
+                None => {
+                    self.status = format!("`language` must be one of: {}", Language::ALL.map(Language::code).join(", "));
+                    None
+                }
+            };
+        }
         match self.session.execute(id, &params) {
             Ok(v) => Some(v),
             Err(e) => {
-                self.status = e.to_string();
+                self.status = self.language.tr(&e.to_string()).to_string();
                 None
             }
         }
+    }
+
+    /// Translates an interface label into the current language.
+    pub fn tr<'a>(&self, text: &'a str) -> &'a str {
+        self.language.tr(text)
+    }
+
+    /// Starts a new empty map, titled in the interface language.
+    pub fn new_map(&mut self) {
+        let title = self.tr("Untitled map").to_string();
+        self.run("map.new", json!({"title": title}));
+        self.path = None;
+        self.view.fit_pending = true;
     }
 
     /// Runs a command that creates a node, then starts editing its text.
@@ -146,15 +181,16 @@ impl IdeaApp {
                 self.session.replace_map(map);
                 self.view.fit_pending = true;
                 self.editing = None;
+                let l = self.language;
                 self.status = if format == ideacraft_engine::formats::Format::IdeaCraft {
-                    format!("Opened {name}")
+                    l.fill("Opened {name}", &[("name", name)])
                 } else {
-                    format!("Imported {name} ({})", format.name())
+                    l.fill("Imported {name} ({format})", &[("name", name), ("format", l.tr(format.name()))])
                 };
                 true
             }
             Err(e) => {
-                self.status = format!("Couldn't open {name}: {e}");
+                self.status = self.language.fill("Couldn't open {name}: {error}", &[("name", name), ("error", &e.to_string())]);
                 false
             }
         }
@@ -167,7 +203,8 @@ impl IdeaApp {
         let name = path.display().to_string();
         let bytes = match std::fs::metadata(path).map(|m| m.len()) {
             Ok(len) if len > ideacraft_engine::formats::MAX_FILE_BYTES as u64 => {
-                self.status = format!("Couldn't open {name}: file too large");
+                let error = self.tr("file too large").to_string();
+                self.status = self.language.fill("Couldn't open {name}: {error}", &[("name", &name), ("error", &error)]);
                 return;
             }
             _ => std::fs::read(path),
@@ -181,7 +218,7 @@ impl IdeaApp {
                 }
             }
             Ok(_) => {}
-            Err(e) => self.status = format!("Couldn't open {name}: {e}"),
+            Err(e) => self.status = self.language.fill("Couldn't open {name}: {error}", &[("name", &name), ("error", &e.to_string())]),
         }
     }
 
@@ -191,8 +228,8 @@ impl IdeaApp {
         let text = self.run("map.export", json!({"format": format.command_format()})).and_then(|v| v["text"].as_str().map(str::to_string));
         if let Some(text) = text {
             self.status = match std::fs::write(path, text) {
-                Ok(()) => format!("Exported {}", path.display()),
-                Err(e) => format!("Couldn't export {}: {e}", path.display()),
+                Ok(()) => self.language.fill("Exported {name}", &[("name", &path.display().to_string())]),
+                Err(e) => self.language.fill("Couldn't export {name}: {error}", &[("name", &path.display().to_string()), ("error", &e.to_string())]),
             };
         }
     }
@@ -216,10 +253,12 @@ impl IdeaApp {
         match std::fs::write(&path, self.session.map().to_json()) {
             Ok(()) => {
                 self.session.mark_saved();
-                self.status = format!("Saved {}", path.display());
+                self.status = self.language.fill("Saved {name}", &[("name", &path.display().to_string())]);
                 self.path = Some(path);
             }
-            Err(e) => self.status = format!("Couldn't save {}: {e}", path.display()),
+            Err(e) => {
+                self.status = self.language.fill("Couldn't save {name}: {error}", &[("name", &path.display().to_string()), ("error", &e.to_string())])
+            }
         }
     }
 
@@ -308,6 +347,23 @@ mod tests {
         assert_eq!(app.session.map().node_count(), 2);
         assert!(!app.open_bytes("bad.mm", b"<nope"));
         assert_eq!(app.session.map().node_count(), 2, "a failed import keeps the map");
+    }
+
+    #[test]
+    fn italian_interface_and_templates() {
+        let ctx = egui::Context::default();
+        let mut app = IdeaApp { gallery_open: true, ..IdeaApp::default() };
+        assert!(app.run("app.language.set", json!({"language": "it"})).is_some());
+        assert_eq!(app.language, Language::It);
+        assert!(app.run("app.language.set", json!({"language": "xx"})).is_none());
+        frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.template_previews.first().map(|m| m.title()), Some("Brainstorming"));
+        assert!(app.template_previews.iter().any(|m| m.title() == "Analisi SWOT"), "previews follow the language");
+        app.new_map();
+        assert_eq!(app.session.map().title(), "Mappa senza titolo");
+        app.run("node.delete", json!({}));
+        assert_eq!(app.status, "Seleziona prima un’idea", "common engine errors are translated");
+        frame(&mut app, &ctx, vec![]);
     }
 
     #[test]

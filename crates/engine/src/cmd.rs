@@ -3,6 +3,7 @@
 
 use ideacraft_core::layout::{self, LEAF_GAP, LEVEL_GAP, Layout};
 use ideacraft_core::{Map, NodeId, Point, Rgb, Shape};
+use ideacraft_formats::templates::Lang;
 use serde_json::{Value, json};
 
 use crate::params as p;
@@ -34,10 +35,10 @@ pub const COMMANDS: &[CommandInfo] = &[
         "New from Template",
         "File › New from Template",
         "",
-        "{template: brainstorm|concept-map|project-plan|swot|decision|meeting|book|fishbone|weekly|roadmap|journey|lesson}",
+        "{template: brainstorm|concept-map|project-plan|swot|decision|meeting|book|fishbone|weekly|roadmap|journey|lesson, language?: en|it}",
         false,
     ),
-    c("map.templates", "Templates", "File › New from Template", "", "{} → [{id, name, category, description}]", false),
+    c("map.templates", "Templates", "File › New from Template", "", "{language?: en|it} → [{id, name, category, description}]", false),
     c(
         "map.importText",
         "Import",
@@ -90,6 +91,14 @@ fn child_slot(map: &Map, parent: NodeId) -> Result<Point> {
     })
 }
 
+/// The optional `language` parameter of template commands.
+fn language(prm: &Value) -> Result<Lang> {
+    match p::opt_str(prm, "language")? {
+        None => Ok(Lang::En),
+        Some(code) => Lang::parse(code).ok_or_else(|| Error::Param("`language` must be en or it".into())),
+    }
+}
+
 fn added(s: &mut Session, id: NodeId) -> Value {
     s.selection = vec![id];
     json!({ "id": id.0 })
@@ -106,15 +115,18 @@ pub(crate) fn run(s: &mut Session, id: &str, prm: &Value) -> Result<Value> {
             let id = p::str(prm, "template")?;
             let t = ideacraft_formats::templates::find(id)
                 .ok_or_else(|| Error::Param(format!("no template {:?}", id.chars().take(40).collect::<String>())))?;
-            s.replace_map(t.build());
+            s.replace_map(t.build_in(language(prm)?));
             Ok(json!({}))
         }
-        "map.templates" => Ok(Value::Array(
-            ideacraft_formats::templates::ALL
-                .iter()
-                .map(|t| json!({"id": t.id, "name": t.name, "category": t.category, "description": t.description}))
-                .collect(),
-        )),
+        "map.templates" => {
+            let lang = language(prm)?;
+            Ok(Value::Array(
+                ideacraft_formats::templates::ALL
+                    .iter()
+                    .map(|t| json!({"id": t.id, "name": t.name(lang), "category": t.category(lang), "description": t.description(lang)}))
+                    .collect(),
+            ))
+        }
         "map.importText" => {
             let text = p::str(prm, "text")?;
             let format = match p::opt_str(prm, "format")? {

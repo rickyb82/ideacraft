@@ -53,13 +53,15 @@ pub fn show(app: &mut IdeaApp, ctx: &egui::Context, t: &Tokens) {
     if !app.gallery_open {
         return;
     }
-    if app.template_previews.len() != templates::ALL.len() {
-        app.template_previews = templates::ALL.iter().map(|t| t.build()).collect();
+    let lang = app.language.templates();
+    if app.template_previews.len() != templates::ALL.len() || app.previews_language != app.language {
+        app.template_previews = templates::ALL.iter().map(|t| t.build_in(lang)).collect();
+        app.previews_language = app.language;
     }
     let mut open = true;
     let mut chosen = None;
-    egui::Window::new("New from template").open(&mut open).collapsible(false).default_size([760.0, 560.0]).show(ctx, |ui| {
-        ui.label(RichText::new("Pick a starting point. Everything stays editable.").color(t.muted));
+    egui::Window::new(app.tr("New from template")).open(&mut open).collapsible(false).default_size([760.0, 560.0]).show(ctx, |ui| {
+        ui.label(RichText::new(app.tr("Pick a starting point. Everything stays editable.")).color(t.muted));
         ui.add_space(6.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -80,15 +82,21 @@ pub fn show(app: &mut IdeaApp, ctx: &egui::Context, t: &Tokens) {
                         thumbnail(p, map, thumb, t);
                     }
                     let text = ui.visuals().strong_text_color();
-                    p.text(pos2(rect.left() + 12.0, thumb.bottom() + 8.0), egui::Align2::LEFT_TOP, tpl.name, egui::FontId::proportional(15.0), text);
+                    p.text(
+                        pos2(rect.left() + 12.0, thumb.bottom() + 8.0),
+                        egui::Align2::LEFT_TOP,
+                        tpl.name(lang),
+                        egui::FontId::proportional(15.0),
+                        text,
+                    );
                     p.text(
                         pos2(rect.left() + 12.0, thumb.bottom() + 30.0),
                         egui::Align2::LEFT_TOP,
-                        tpl.category,
+                        tpl.category(lang),
                         egui::FontId::proportional(12.0),
                         t.muted,
                     );
-                    if resp.on_hover_text(tpl.description).clicked() {
+                    if resp.on_hover_text(tpl.description(lang)).clicked() {
                         chosen = Some(tpl.id);
                     }
                 }
@@ -96,7 +104,7 @@ pub fn show(app: &mut IdeaApp, ctx: &egui::Context, t: &Tokens) {
         });
     });
     if let Some(id) = chosen {
-        app.run("map.newFromTemplate", json!({"template": id}));
+        app.run("map.newFromTemplate", json!({"template": id, "language": app.language.code()}));
         app.path = None;
         app.view.fit_pending = true;
         open = false;

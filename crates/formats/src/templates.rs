@@ -9,6 +9,34 @@ use ideacraft_core::{Map, Point, Rgb, Shape};
 use crate::build::{self, Link, Topic};
 use crate::markdown::{indent, rank, tree};
 
+/// Template languages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Lang {
+    #[default]
+    En,
+    It,
+}
+
+impl Lang {
+    pub fn parse(code: &str) -> Option<Self> {
+        match code.trim().split(['-', '_']).next()?.to_ascii_lowercase().as_str() {
+            "en" => Some(Self::En),
+            "it" => Some(Self::It),
+            _ => None,
+        }
+    }
+}
+
+/// A template's text in one language.
+pub struct Text {
+    pub name: &'static str,
+    pub description: &'static str,
+    /// For galleries: a short category.
+    pub category: &'static str,
+    outline: &'static str,
+    links: &'static [(&'static str, &'static str, &'static str)],
+}
+
 pub struct Template {
     pub id: &'static str,
     pub name: &'static str,
@@ -17,6 +45,8 @@ pub struct Template {
     pub category: &'static str,
     outline: &'static str,
     links: &'static [(&'static str, &'static str, &'static str)],
+    /// Italian text (links name ideas by their Italian labels).
+    it: Text,
     palette: &'static [Rgb],
     root: Rgb,
     root_shape: Shape,
@@ -57,6 +87,28 @@ pub const ALL: &[Template] = &[
     Other industries
     Nature",
         links: &[("Ask our users", "New audience", "could reveal")],
+        it: Text {
+            name: "Brainstorming",
+            description: "Una domanda centrale con gruppi di idee intorno, disposti in cerchio.",
+            category: "Idee",
+            outline: "Cosa potremmo provare adesso?
+  Risultati rapidi
+    Piccolo esperimento
+    Chiedere agli utenti
+  Grandi scommesse
+    Nuovo pubblico
+    Partnership
+  Idee folli
+    Fare il contrario
+    Unire due prodotti
+  Domande
+    Cosa lo renderebbe facile?
+    Cosa ci blocca?
+  Ispirazione
+    Altri settori
+    Natura",
+            links: &[("Chiedere agli utenti", "Nuovo pubblico", "potrebbe rivelare")],
+        },
         palette: PASTEL,
         root: rgb(0xffde85),
         root_shape: Shape::Ellipse,
@@ -86,6 +138,29 @@ pub const ALL: &[Template] = &[
             ("Precipitation", "Collection", "feeds"),
             ("Collection", "Evaporation", "starts again with"),
         ],
+        it: Text {
+            name: "Mappa concettuale",
+            description: "Una mappa concettuale per studiare: concetti uniti da collegamenti etichettati (con il ciclo dell’acqua come esempio).",
+            category: "Studio",
+            outline: "Ciclo dell’acqua
+  Evaporazione
+    Il sole scalda l’acqua
+  Condensazione
+    Si formano le nuvole
+  Precipitazioni
+    Pioggia
+    Neve
+  Raccolta
+    Fiumi
+    Oceani
+    Falde acquifere",
+            links: &[
+                ("Evaporazione", "Condensazione", "porta a"),
+                ("Condensazione", "Precipitazioni", "porta a"),
+                ("Precipitazioni", "Raccolta", "alimenta"),
+                ("Raccolta", "Evaporazione", "ricomincia con"),
+            ],
+        },
         palette: OCEAN,
         root: rgb(0xffffff),
         root_shape: Shape::Ellipse,
@@ -119,6 +194,33 @@ pub const ALL: &[Template] = &[
   Risks
     Risk and mitigation",
         links: &[("Milestone 2", "Risk and mitigation", "watch")],
+        it: Text {
+            name: "Piano di progetto",
+            description: "Obiettivi, ambito, tempi, team, budget e rischi di un progetto.",
+            category: "Lavoro",
+            outline: "Progetto
+  Obiettivi
+    Risultato principale
+    Come misuriamo il successo
+  Ambito
+    Incluso
+    Escluso
+  Tempi
+    Avvio
+    Traguardo 1
+    Traguardo 2
+    Lancio
+  Team
+    Responsabile
+    Collaboratori
+    Stakeholder
+  Budget
+    Persone
+    Strumenti
+  Rischi
+    Rischio e contromisura",
+            links: &[("Traguardo 2", "Rischio e contromisura", "da monitorare")],
+        },
         palette: PASTEL,
         root: rgb(0xffde85),
         root_shape: Shape::Pill,
@@ -144,6 +246,25 @@ pub const ALL: &[Template] = &[
     Competition
     Changes outside our control",
         links: &[("What we do best", "Unmet needs", "can serve")],
+        it: Text {
+            name: "Analisi SWOT",
+            description: "Punti di forza, debolezze, opportunità e minacce, ciascuno con il suo colore.",
+            category: "Strategia",
+            outline: "SWOT
+  Punti di forza
+    Cosa facciamo meglio
+    Risorse uniche
+  Debolezze
+    Cosa migliorare
+    Competenze che mancano
+  Opportunità
+    Tendenze da sfruttare
+    Bisogni non soddisfatti
+  Minacce
+    Concorrenza
+    Cambiamenti fuori dal nostro controllo",
+            links: &[("Cosa facciamo meglio", "Bisogni non soddisfatti", "può soddisfare")],
+        },
         palette: SWOT,
         root: rgb(0xffffff),
         root_shape: Shape::Ellipse,
@@ -172,6 +293,28 @@ pub const ALL: &[Template] = &[
     Must have
     Nice to have",
         links: &[],
+        it: Text {
+            name: "Prendere una decisione",
+            description: "Confronta le opzioni fianco a fianco con pro, contro e costi.",
+            category: "Strategia",
+            outline: "Decisione da prendere
+  Opzione A
+    Pro
+    Contro
+    Costo
+  Opzione B
+    Pro
+    Contro
+    Costo
+  Opzione C
+    Pro
+    Contro
+    Costo
+  Criteri
+    Indispensabile
+    Desiderabile",
+            links: &[],
+        },
         palette: SUNSET,
         root: rgb(0xffde85),
         root_shape: Shape::Pill,
@@ -196,6 +339,24 @@ pub const ALL: &[Template] = &[
     Task, owner, date
   Next meeting",
         links: &[("Open questions", "Next meeting", "carry over to")],
+        it: Text {
+            name: "Verbale di riunione",
+            description: "Ordine del giorno, discussione, decisioni e azioni con i responsabili.",
+            category: "Lavoro",
+            outline: "Riunione
+  Ordine del giorno
+    Punto 1
+    Punto 2
+  Partecipanti
+  Discussione
+    Punti chiave
+    Domande aperte
+  Decisioni
+  Azioni
+    Attività, responsabile, scadenza
+  Prossima riunione",
+            links: &[("Domande aperte", "Prossima riunione", "rimandate a")],
+        },
         palette: OCEAN,
         root: rgb(0xc8eef7),
         root_shape: Shape::Pill,
@@ -220,6 +381,24 @@ pub const ALL: &[Template] = &[
   Quotes
   My opinion",
         links: &[("Main character", "Turning point", "changes at")],
+        it: Text {
+            name: "Riassunto di un libro",
+            description: "Personaggi, trama, temi e citazioni preferite di un libro.",
+            category: "Studio",
+            outline: "Titolo del libro
+  Autore
+  Personaggi
+    Protagonista
+    Personaggi secondari
+  Trama
+    Inizio
+    Svolta
+    Finale
+  Temi
+  Citazioni
+  La mia opinione",
+            links: &[("Protagonista", "Svolta", "cambia con")],
+        },
         palette: SUNSET,
         root: rgb(0xffe39b),
         root_shape: Shape::Rect,
@@ -247,6 +426,27 @@ pub const ALL: &[Template] = &[
   Measurement
     Wrong metric",
         links: &[("Workload", "Handoffs", "worsens")],
+        it: Text {
+            name: "Causa ed effetto",
+            description: "Trova le cause profonde di un problema, raggruppate per categoria.",
+            category: "Strategia",
+            outline: "Problema
+  Persone
+    Formazione
+    Carico di lavoro
+  Processo
+    Passaggi poco chiari
+    Passaggi di consegne
+  Strumenti
+    Software obsoleto
+  Materiali
+    Ritardi nelle forniture
+  Ambiente
+    Rumore
+  Misurazione
+    Indicatore sbagliato",
+            links: &[("Carico di lavoro", "Passaggi di consegne", "peggiora")],
+        },
         palette: FOREST,
         root: rgb(0xffb3a3),
         root_shape: Shape::Rect,
@@ -269,6 +469,22 @@ pub const ALL: &[Template] = &[
     Rest
     Family and friends",
         links: &[],
+        it: Text {
+            name: "Planner settimanale",
+            description: "Un ramo per ogni giorno, con un obiettivo per la settimana.",
+            category: "Personale",
+            outline: "Questa settimana
+  Obiettivo
+  Lunedì
+  Martedì
+  Mercoledì
+  Giovedì
+  Venerdì
+  Fine settimana
+    Riposo
+    Famiglia e amici",
+            links: &[],
+        },
         palette: PASTEL,
         root: rgb(0xffde85),
         root_shape: Shape::Ellipse,
@@ -291,6 +507,22 @@ pub const ALL: &[Template] = &[
     Offline mode
     Integrations",
         links: &[("Faster search", "Offline mode", "needed for"), ("Sharing", "Integrations", "opens")],
+        it: Text {
+            name: "Roadmap di prodotto",
+            description: "Adesso, dopo e più avanti, con le dipendenze tra le attività.",
+            category: "Lavoro",
+            outline: "Roadmap
+  Adesso
+    Migliorare l’onboarding
+    Ricerca più veloce
+  Dopo
+    App mobile
+    Condivisione
+  Più avanti
+    Modalità offline
+    Integrazioni",
+            links: &[("Ricerca più veloce", "Modalità offline", "serve per"), ("Condivisione", "Integrazioni", "apre la strada a")],
+        },
         palette: OCEAN,
         root: rgb(0xd0c2fc),
         root_shape: Shape::Pill,
@@ -314,6 +546,28 @@ pub const ALL: &[Template] = &[
   Recommend
     Tells a friend",
         links: &[("Discover", "Consider", "then"), ("Consider", "Buy", "then"), ("Buy", "Use", "then"), ("Use", "Recommend", "then")],
+        it: Text {
+            name: "Customer journey",
+            description: "Le fasi che attraversa un cliente, con cosa fa e cosa prova.",
+            category: "Strategia",
+            outline: "Customer journey
+  Scoperta
+    Vede un post
+  Valutazione
+    Confronta le opzioni
+  Acquisto
+    Completa l’ordine
+  Utilizzo
+    Primo successo
+  Passaparola
+    Lo consiglia a un amico",
+            links: &[
+                ("Scoperta", "Valutazione", "poi"),
+                ("Valutazione", "Acquisto", "poi"),
+                ("Acquisto", "Utilizzo", "poi"),
+                ("Utilizzo", "Passaparola", "poi"),
+            ],
+        },
         palette: SUNSET,
         root: rgb(0xffffff),
         root_shape: Shape::Pill,
@@ -336,6 +590,22 @@ pub const ALL: &[Template] = &[
   Assessment
   Homework",
         links: &[("Objectives", "Assessment", "checked by")],
+        it: Text {
+            name: "Piano di lezione",
+            description: "Obiettivi, materiali, attività e verifica per una lezione.",
+            category: "Studio",
+            outline: "Lezione
+  Obiettivi
+    Gli studenti sapranno…
+  Materiali
+  Attività
+    Riscaldamento
+    Attività principale
+    Conclusione
+  Verifica
+  Compiti",
+            links: &[("Obiettivi", "Verifica", "verificati con")],
+        },
         palette: FOREST,
         root: rgb(0xd6f0a0),
         root_shape: Shape::Ellipse,
@@ -349,11 +619,30 @@ pub fn find(id: &str) -> Option<&'static Template> {
 }
 
 impl Template {
-    /// A fresh map from this template.
+    pub fn name(&self, lang: Lang) -> &'static str {
+        if lang == Lang::It { self.it.name } else { self.name }
+    }
+
+    pub fn description(&self, lang: Lang) -> &'static str {
+        if lang == Lang::It { self.it.description } else { self.description }
+    }
+
+    pub fn category(&self, lang: Lang) -> &'static str {
+        if lang == Lang::It { self.it.category } else { self.category }
+    }
+
+    /// A fresh map from this template, in English.
     pub fn build(&self) -> Map {
+        self.build_in(Lang::En)
+    }
+
+    /// A fresh map from this template, in `lang`.
+    pub fn build_in(&self, lang: Lang) -> Map {
+        let (outline, links, name) =
+            if lang == Lang::It { (self.it.outline, self.it.links, self.it.name) } else { (self.outline, self.links, self.name) };
         let mut widths = Vec::new();
         let items: Vec<(usize, Topic)> =
-            self.outline.lines().filter(|l| !l.trim().is_empty()).map(|l| (rank(&mut widths, indent(l)), Topic::new(l.trim()))).collect();
+            outline.lines().filter(|l| !l.trim().is_empty()).map(|l| (rank(&mut widths, indent(l)), Topic::new(l.trim()))).collect();
         let mut roots = tree(items);
         for root in &mut roots {
             root.color = Some(self.root);
@@ -369,10 +658,10 @@ impl Template {
                 }
             }
         }
-        let links: Vec<Link> = self.links.iter().map(|(a, b, l)| Link { from: (*a).into(), to: (*b).into(), label: (*l).into() }).collect();
-        let title = roots.first().map(|r| r.label.clone()).unwrap_or_else(|| self.name.into());
+        let links: Vec<Link> = links.iter().map(|(a, b, l)| Link { from: (*a).into(), to: (*b).into(), label: (*l).into() }).collect();
+        let title = roots.first().map(|r| r.label.clone()).unwrap_or_else(|| name.into());
         let mut map = build::build(&title, roots, &links);
-        map.set_title(self.name);
+        map.set_title(name);
         if let Some(root) = map.roots().first().copied() {
             let _ = map.set_pos(root, Point::default());
         }
@@ -394,7 +683,15 @@ mod tests {
             assert_eq!(m.roots().len(), 1, "{}", t.id);
             assert_eq!(m.edge_count(), t.links.len(), "{}: a link names a missing idea", t.id);
             assert_eq!(Map::from_json(&m.to_json()).as_ref(), Ok(&m));
+            let it = t.build_in(Lang::It);
+            assert_eq!(it.node_count(), m.node_count(), "{}: the Italian outline has the same shape", t.id);
+            assert_eq!(it.edge_count(), t.it.links.len(), "{}: an Italian link names a missing idea", t.id);
+            assert_eq!(it.title(), t.it.name);
+            assert_ne!(it.to_json(), m.to_json(), "{} is translated", t.id);
         }
+        assert_eq!(find("swot").unwrap().name(Lang::It), "Analisi SWOT");
+        assert_eq!(Lang::parse("it-IT"), Some(Lang::It));
+        assert_eq!(Lang::parse("fr"), None);
         assert!(find("SWOT").is_some());
         assert!(find("nope").is_none());
     }

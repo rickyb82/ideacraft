@@ -186,5 +186,9 @@ mod tests {
         assert_eq!(r["format"], "Markdown / text outline");
         assert!(s.map().node_count() > 8);
         assert!(s.execute("map.newFromTemplate", &json!({"template": "x"})).is_err());
+        s.execute("map.newFromTemplate", &json!({"template": "swot", "language": "it"})).unwrap();
+        assert_eq!(s.map().title(), "Analisi SWOT");
+        assert!(s.map().nodes().any(|n| n.label == "Punti di forza"));
+        assert!(s.execute("map.newFromTemplate", &json!({"template": "swot", "language": "xx"})).is_err());
     }
 }

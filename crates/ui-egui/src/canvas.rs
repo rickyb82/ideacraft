@@ -269,9 +269,7 @@ pub(crate) fn keyboard(app: &mut IdeaApp, ui: &egui::Ui) {
             app.requests.push(crate::Request::SaveAs);
         }
     } else if pressed(Modifiers::COMMAND, Key::N) {
-        app.run("map.new", json!({}));
-        app.path = None;
-        app.view.fit_pending = true;
+        app.new_map();
     } else if app.session.selection().is_empty() {
         let _ = pressed(Modifiers::NONE, Key::Tab);
         if pressed(Modifiers::NONE, Key::Escape) {
@@ -323,7 +321,7 @@ fn text_editor(app: &mut IdeaApp, ui: &egui::Ui, laid: &[Laid], f: &Frame) {
                 .desired_rows(1)
                 .font(FontId::proportional(FONT * f.zoom))
                 .horizontal_align(egui::Align::Center)
-                .hint_text("Idea");
+                .hint_text(app.tr("Idea"));
             let resp = ui.add(edit);
             if !resp.has_focus() && !resp.lost_focus() {
                 resp.request_focus();

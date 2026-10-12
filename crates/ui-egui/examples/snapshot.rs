@@ -1,6 +1,6 @@
 //! Renders the UI offscreen to a PNG with a small software rasteriser: no window, no GPU.
 //!
-//! `cargo run -p ideacraft-ui-egui --example snapshot -- [--sample | --template ID | --gallery | FILE] out.png [--dark] [--size WxH]`
+//! `cargo run -p ideacraft-ui-egui --example snapshot -- [--sample | --template ID | --gallery | FILE] out.png [--dark] [--lang it] [--size WxH]`
 
 use std::collections::HashMap;
 
@@ -46,9 +46,8 @@ fn raster(prims: &[egui::ClippedPrimitive], textures: &HashMap<TextureId, Textur
         let Primitive::Mesh(mesh) = &p.primitive else { continue };
         let tex = textures.get(&mesh.texture_id);
         let clip = p.clip_rect;
-        for tri in mesh.indices.chunks_exact(3) {
-            let v: Vec<_> = tri.iter().filter_map(|i| mesh.vertices.get(*i as usize)).collect();
-            let [a, b, c] = [v[0], v[1], v[2]];
+        for tri in mesh.indices.as_chunks::<3>().0 {
+            let [Some(a), Some(b), Some(c)] = tri.map(|i| mesh.vertices.get(i as usize)) else { continue };
             let area = (b.pos - a.pos).x * (c.pos - a.pos).y - (b.pos - a.pos).y * (c.pos - a.pos).x;
             if area.abs() < 1e-6 {
                 continue;
@@ -98,13 +97,20 @@ fn main() {
     let mut out = "snapshot.png".to_string();
     let mut dark = false;
     let (mut w, mut h) = (1280usize, 800usize);
+    let mut language = ideacraft_ui_egui::Language::En;
+    if let Some(i) = args.iter().position(|a| a == "--lang") {
+        language = args.get(i + 1).and_then(|c| ideacraft_ui_egui::Language::parse(c)).unwrap_or_default();
+    }
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--sample" => app = IdeaApp::new(Map::sample()),
             "--template" => {
                 app = IdeaApp::default();
-                app.run("map.newFromTemplate", json!({"template": it.next().cloned().unwrap_or_default()}));
+                app.run("map.newFromTemplate", json!({"template": it.next().cloned().unwrap_or_default(), "language": language.code()}));
+            }
+            "--lang" => {
+                it.next();
             }
             "--gallery" => {
                 app = IdeaApp::default();
@@ -121,6 +127,7 @@ fn main() {
             p => app.open_path(std::path::Path::new(p)),
         }
     }
+    app.language = language;
     let ctx = egui::Context::default();
     ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
     let mut textures = HashMap::new();
