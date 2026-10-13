@@ -24,7 +24,7 @@ pub const MAP_JSON_URI: &str = "ideacraft://map.json";
 /// Longest request line read (bytes); longer lines are answered with an error.
 const MAX_LINE: usize = 32 * 1024 * 1024;
 
-const INSTRUCTIONS: &str = "Prompts: create_map (a map from a description), design_network (a checked network diagram), check_network. \
+const INSTRUCTIONS: &str = "NETWORK DIAGRAMS (schemi di rete): call network_guide first, then build_map with mode=diagram and net.* stencil kinds, then validate_network. Prompts: create_map (a map from a description), design_network (a checked network diagram), check_network. \
 build_map creates a whole map in one call; validate_network checks ip/vlan/interfaces. IdeaCraft edits one map at a time: a mind/concept map (ideas in a tree plus labelled links) or, in diagram mode, a free diagram \
 (network diagrams, flowcharts, architectures) made of stencil shapes (list_stencils: routers, switches, servers, clouds, flowchart symbols…) with sizes, \
 properties (ip, vlan, status…) and styled connectors (style_link: orthogonal/dashed/arrows). Use add_shape for diagrams, add_idea/add_ideas for maps, \
@@ -105,7 +105,9 @@ fn tools() -> Value {
         {"name": "align", "description": "Tidy shapes: align several ids on an edge (left|right|top|bottom|centerX|centerY), distribute them along x or y, or snap them to the grid.",
          "inputSchema": {"type": "object", "properties": {"ids": {"type": "array", "items": id}, "edge": {"type": "string", "enum": ["left", "right", "top", "bottom", "centerX", "centerY"]},
              "distribute": {"type": "string", "enum": ["x", "y"]}, "snap": {"type": "boolean"}}, "required": ["ids"]}},
-        {"name": "build_map", "description": "Build a whole map in one call from a nested spec: {title?, mode?: map|diagram, layout?: tree|radial, nodes: [{label, kind?, color?, shape?, x?, y?, props?, children?: [...]}], links?: [{from, to, label?, route?, line?, arrows?}]}. `from`/`to` are node labels (or 'path' labels like 'Root/Branch') or ids returned later. Replaces the open map unless append=true. Returns the outline with ids.",
+        {"name": "network_guide", "description": "How to draw a NETWORK DIAGRAM (schema di rete) or any Visio-style diagram from a plain-language request: the stencil kinds (net.router, net.switch, net.firewall, net.server, net.pc, net.wifi…), the properties that make it checkable (ip, gateway, vlan, interfaces), how to label links (VLAN 10, Gi0/1 - eth0), and a complete build_map example. Call it first when asked for a network, an infrastructure or an IT diagram.",
+         "inputSchema": {"type": "object", "properties": {"language": language}}},
+        {"name": "build_map", "description": "Build a whole mind map OR a diagram (NETWORK DIAGRAM / schema di rete, flowchart, architecture) in one call from a nested spec: {title?, mode?: map|diagram, layout?: tree|radial, nodes: [{label, kind?, color?, shape?, x?, y?, props?, children?: [...]}], links?: [{from, to, label?, route?, line?, arrows?}]}. `from`/`to` are node labels (or 'path' labels like 'Root/Branch') or ids returned later. For a network diagram use mode=diagram, a stencil `kind` per device (list_stencils / network_guide) and props like {\"ip\": \"192.168.10.5/24\", \"vlan\": \"10\"}; then call validate_network. Replaces the open map unless append=true. Returns the outline with ids.",
          "inputSchema": {"type": "object", "properties": {
              "title": {"type": "string"}, "mode": {"type": "string", "enum": ["map", "diagram"]}, "layout": {"type": "string", "enum": ["tree", "radial", "none"]}, "append": {"type": "boolean"},
              "nodes": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}, "kind": {"type": "string"}, "color": color, "shape": shape, "x": {"type": "number"}, "y": {"type": "number"},
@@ -210,6 +212,52 @@ Give every device props: ip (with /prefix, e.g. 192.168.10.5/24), gateway, vlan;
             ),
         )),
         _ => None,
+    }
+}
+
+/// The recipe for drawing a checkable network diagram, for models that only see tool descriptions.
+fn network_guide(italian: bool) -> String {
+    let example = r#"{"title": "Sede Cagliari", "mode": "diagram",
+ "nodes": [
+  {"label": "Internet", "kind": "net.internet", "x": 0, "y": 0},
+  {"label": "Firewall", "kind": "net.firewall", "x": 0, "y": 160, "props": {"ip": "192.168.1.1/24", "interfaces": "wan=203.0.113.2/30; lan=192.168.1.1/24; vlan10=192.168.10.1/24; vlan20=192.168.20.1/24"}},
+  {"label": "Switch core", "kind": "net.switch", "x": 0, "y": 320, "props": {"ip": "192.168.1.2/24", "gateway": "192.168.1.1", "vlans": "10,20", "interfaces": "Gi0/1 trunk 10,20; Gi0/2 vlan 10; Gi0/3 vlan 20"}},
+  {"label": "Sala server", "kind": "basic.container", "x": 320, "y": 480, "w": 360, "h": 220},
+  {"label": "File server", "kind": "net.server", "x": 250, "y": 500, "props": {"ip": "192.168.10.10/24", "gateway": "192.168.10.1", "vlan": "10", "status": "up"}},
+  {"label": "Postazione 1", "kind": "net.pc", "x": -250, "y": 500, "props": {"ip": "192.168.20.21/24", "gateway": "192.168.20.1", "vlan": "20"}}
+ ],
+ "links": [
+  {"from": "Internet", "to": "Firewall", "label": "WAN", "route": "orthogonal"},
+  {"from": "Firewall", "to": "Switch core", "label": "lan - Gi0/1", "route": "orthogonal"},
+  {"from": "Switch core", "to": "File server", "label": "VLAN 10 Gi0/2", "route": "orthogonal"},
+  {"from": "Switch core", "to": "Postazione 1", "label": "VLAN 20 Gi0/3", "route": "orthogonal"}
+ ]}"#;
+    if italian {
+        format!(
+            "COME DISEGNARE UNO SCHEMA DI RETE CON IDEACRAFT
+
+1. Usa build_map con mode=\"diagram\": un nodo per dispositivo con il `kind` dello stencil: net.internet, net.wan, net.router, net.firewall, net.switch, net.wifi (access point), net.server, net.storage (NAS), net.pc, net.laptop, net.phone, net.printer, net.vpn, net.loadbalancer, net.modem, net.rack, net.ups, net.iot, net.tablet; cloud.cloud, cloud.vm, cloud.database, cloud.queue…; basic.container per zone (sala server, uffici) con w/h. Posizioni x/y in una griglia da 160-200 unità, dall'alto (internet) verso il basso (postazioni).
+2. Metti i dati nelle props: ip (10.0.1.5/24), gateway, vlan (10 oppure 10,20), interfaces (es. \"Gi0/1 trunk 10,20; Gi0/2 vlan 10; eth0=192.168.1.1/24\"), status (up|warning|down), e quello che serve (modello, owner).
+3. Etichetta i collegamenti con la VLAN e le interfacce (\"VLAN 10 Gi0/2\", \"lan - Gi0/1\"); route orthogonal per i cavi, line dashed per VPN/Wi-Fi.
+4. Dopo build_map chiama validate_network: segnala indirizzi non validi o duplicati, gateway fuori subnet, VLAN incoerenti, interfacce inesistenti o riusate, dispositivi isolati. Correggi con update_idea/run_command node.setProps e ripeti finché non ci sono errori.
+5. Mostra la mappa con get_map; esporta con export drawio (per draw.io/Visio) o svg, oppure salva con save_map.
+
+Esempio completo di build_map:
+{example}"
+        )
+    } else {
+        format!(
+            "HOW TO DRAW A NETWORK DIAGRAM WITH IDEACRAFT
+
+1. Call build_map with mode=\"diagram\": one node per device with the stencil `kind`: net.internet, net.wan, net.router, net.firewall, net.switch, net.wifi (access point), net.server, net.storage (NAS), net.pc, net.laptop, net.phone, net.printer, net.vpn, net.loadbalancer, net.modem, net.rack, net.ups, net.iot, net.tablet; cloud.cloud, cloud.vm, cloud.database, cloud.queue…; basic.container for zones (server room, offices) with w/h. Positions x/y on a 160-200 unit grid, top (internet) to bottom (workstations).
+2. Put the data in props: ip (10.0.1.5/24), gateway, vlan (10 or 10,20), interfaces (e.g. \"Gi0/1 trunk 10,20; Gi0/2 vlan 10; eth0=192.168.1.1/24\"), status (up|warning|down), and whatever matters (model, owner).
+3. Label links with the VLAN and the interfaces (\"VLAN 10 Gi0/2\", \"lan - Gi0/1\"); route orthogonal for cables, line dashed for VPN/Wi-Fi.
+4. After build_map call validate_network: it reports invalid or duplicate addresses, gateways outside the subnet, VLAN mismatches, unknown or reused interfaces, isolated devices. Fix with update_idea/run_command node.setProps and repeat until there are no errors.
+5. Show the map with get_map; export drawio (for draw.io/Visio) or svg, or save_map.
+
+Complete build_map example:
+{example}"
+        )
     }
 }
 
@@ -430,6 +478,10 @@ impl Server {
                     self.exec("group.create", json!({"ids": ids}))
                 }
             }
+            "network_guide" => {
+                let italian = str_arg(args, "language").is_some_and(|l| l.eq_ignore_ascii_case("it"));
+                Ok(json!({"guide": network_guide(italian)}))
+            }
             "build_map" => {
                 // Some clients wrap the whole spec in `spec`.
                 let args = args.get("spec").filter(|s| s.is_object()).unwrap_or(args);
@@ -463,6 +515,9 @@ impl Server {
                     }
                     let id = self.exec("node.add", params)?["id"].as_u64().ok_or("no id returned")?;
                     self.style(id, &spec)?;
+                    if let (Some(w), Some(h)) = (spec.get("w").and_then(Value::as_f64), spec.get("h").and_then(Value::as_f64)) {
+                        self.exec("node.resize", json!({"id": id, "w": w, "h": h}))?;
+                    }
                     if let Some(props) = spec.get("props").filter(|p| p.is_object()) {
                         self.exec("node.setProps", json!({"id": id, "props": props}))?;
                     }
@@ -712,7 +767,9 @@ mod tests {
         assert!(s.handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none(), "notifications get no reply");
         let list = s.handle(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).unwrap();
         let tools = list["result"]["tools"].as_array().unwrap();
-        assert!(tools.len() >= 24);
+        assert!(tools.len() >= 25);
+        let g = call(&mut s, "network_guide", json!({"language": "it"}));
+        assert!(g["guide"].as_str().unwrap().contains("build_map"));
         for t in tools {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
             assert!(t["description"].as_str().is_some_and(|d| !d.is_empty()));

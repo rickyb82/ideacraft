@@ -51,6 +51,7 @@ between the stages, lay it out radially and save it as ciclo.ideacraft.json and 
 | `layout` | `tree` or `radial` |
 | `export` | `markdown`, `opml`, `freemind`, `drawio` (for draw.io / Visio), `svg` (a picture of the map) or `ideacraft` JSON |
 | `list_stencils` | The shape library for diagrams (`category`: basic, flowchart, network, cloud, people, uml, bpmn; `language`) |
+| `network_guide` | The recipe for a checkable network diagram (stencil kinds, properties, link labels, a complete `build_map` example), in English or Italian; for clients that do not pass the server instructions to the model |
 | `build_map` | A whole map or diagram from one nested spec: `title`, `mode`, `layout`, `nodes` (label, kind, colour, shape, x/y, props, children…) and `links` (from/to by label, path or id, with label and style); `append` adds to the open map. Returns the outline and any unresolved links |
 | `validate_network` | Checks the diagram's addresses, masks, gateways, VLANs and interfaces (`language`): counts and findings with codes, messages and the shapes/links involved |
 | `set_layer` | Move shapes to a layer (`layer`, `null` for the default; created when missing) and/or show, hide, lock or unlock it (`visible`, `locked`); returns the layers |
