@@ -14,5 +14,9 @@ serde_json = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
 rfd = { workspace = true }
 
+[build-dependencies]
+# Windows only (build.rs): embeds assets/app-icon/ideacraft.ico and the version info in the exe.
+winresource = "0.1"
+
 [lints]
 workspace = true

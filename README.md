@@ -61,6 +61,20 @@ conventions: everything is a command, nothing crashes, and every file stays read
   edit, lay out, export (including SVG) and save maps; see [docs/mcp.md](docs/mcp.md).
 - **Headless CLI** for scripts: run any command, convert between formats, list templates.
 
+## Download
+
+Installers for Windows (MSI, or a portable zip) and macOS (universal DMG, plus a zip of
+`ideacraft-cli`) are published on the
+[GitHub releases page](https://github.com/rickyb82/ideacraft/releases); `SHA256SUMS.txt` lists
+their checksums. They are **not code-signed yet**, so the first launch shows a warning:
+
+- **Windows** — SmartScreen says "Windows protected your PC": click *More info*, then *Run anyway*.
+- **macOS** — Gatekeeper says the app "cannot be opened": right-click (or Control-click)
+  `IdeaCraft.app` and choose *Open*, then *Open* again; this is needed only the first time.
+
+Linux users build from source (below) or use the web app. See [packaging/README.md](packaging/README.md)
+to build the installers yourself.
+
 ## Run it
 
 ```sh
