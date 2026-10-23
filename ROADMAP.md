@@ -59,3 +59,4 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 | 2026-10-12 | MCP: `--in FILE`, saving back to .mm/.opml/.md files in their format, resources, tool aliases |
 | 2026-10-12 | Diagram mode (Visio-style): stencils, styled connectors, properties with status lights, align/distribute, draw.io import/export, diagram templates, MCP diagram tools |
 | 2026-10-12 | Layers and groups, UML/BPMN/network stencils (74), network check (IP/VLAN/interfaces) in UI, CLI and MCP, MCP prompts and `build_map` for natural-language maps |
+| 2026-10-23 | Release pipeline: original app icon (`cargo xtask icons`), Windows MSI + portable zip, macOS universal DMG + CLI zip, draft GitHub releases (`packaging/`, `release.yml`) |
