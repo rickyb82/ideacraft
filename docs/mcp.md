@@ -1,6 +1,6 @@
 # MCP server
 
-> **Last updated:** 2026-10-12
+> **Last updated:** 2026-10-26
 
 IdeaCraft speaks the [Model Context Protocol](https://modelcontextprotocol.io) so AI agents
 (Claude Code, Claude Desktop and any other MCP client) can build and edit concept maps directly:
@@ -12,14 +12,31 @@ commands, so it is validated and undoable, and a failed call never changes the m
 
 ```sh
 cargo install --path apps/ideacraft-cli          # puts ideacraft-cli on your PATH
-claude mcp add ideacraft -- ideacraft-cli mcp     # Claude Code
+claude mcp add ideacraft -- ideacraft-cli mcp --automation-read-root ~/maps --automation-write-root ~/maps   # Claude Code
 ```
 
 Claude Desktop (`claude_desktop_config.json`):
 
 ```json
-{ "mcpServers": { "ideacraft": { "command": "ideacraft-cli", "args": ["mcp"] } } }
+{ "mcpServers": { "ideacraft": { "command": "ideacraft-cli",
+  "args": ["mcp", "--automation-read-root", "/Users/me/maps", "--automation-write-root", "/Users/me/maps"] } } }
 ```
+
+### Files the agent may read and write
+
+A map the agent opens can carry instructions aimed at it (prompt injection). So the server
+reaches the file system only inside two folders given at start: `open_map` reads only inside
+`--automation-read-root`, `save_map` writes only inside `--automation-write-root`. Paths are made
+absolute against the working directory and their links are followed before the comparison: `../`
+out of a root, an absolute path elsewhere and a link that leads out are refused
+(`automation path rejected: …`), and nothing is written. The two roots are separate (a write root
+is not readable unless it is also inside the read root).
+
+**Without the flags the server reads and writes no file by path** (`automation file access
+refused: no read root …`); maps still come and go as text through `import_text` and `export`.
+To give an agent your whole disk, say so: `--automation-read-root / --automation-write-root /`.
+`--in FILE` is yours, not the agent's: it is opened before the roots apply (saving it back still
+needs it inside the write root).
 
 Start with a file, as with the other craft apps (`gridcraft-cli mcp --in …`):
 

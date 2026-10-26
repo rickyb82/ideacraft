@@ -120,10 +120,11 @@ Export download the file; the open map, language and theme are kept in the brows
 
 ```sh
 cargo install --path apps/ideacraft-cli
-claude mcp add ideacraft -- ideacraft-cli mcp
+claude mcp add ideacraft -- ideacraft-cli mcp --automation-read-root ~/maps --automation-write-root ~/maps
 ```
 
-Tools, examples and the Claude Desktop configuration are in [docs/mcp.md](docs/mcp.md). The
+The agent opens and saves files only inside those folders (none without them). Tools, examples
+and the Claude Desktop configuration are in [docs/mcp.md](docs/mcp.md). The
 server also offers **prompts**: `create_map` turns a plain-language brief ("a project plan for a
 school garden", "the network of a branch office with two VLANs") into a complete map or diagram,
 `design_network` draws an addressed network and checks it, and `check_network` reviews the open

@@ -7,11 +7,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::io::{BufRead, Write};
+use std::sync::Arc;
 
 use ideacraft_engine::core::{Map, NodeId, stencil};
 use ideacraft_engine::formats::{self, templates};
 use ideacraft_engine::{COMMANDS, Session};
+use roots::{Access, AutomationRoots};
 use serde_json::{Value, json};
+
+pub mod roots;
 
 /// MCP protocol revision this server prefers.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -33,11 +37,13 @@ with add_idea/add_ideas (children hang under a parent id), connect any two ideas
 rearrange with layout, and read the result with get_map (an outline with ids) or export (svg to look at it). Save with save_map. \
 run_command reaches every engine command (list_commands), including edit.undo and edit.redo.";
 
-/// The server: one open map, and the file it came from (path and the format it is saved in).
+/// The server: one open map, the file it came from (path and the format it is saved in), and the
+/// folders its tools may read and write ([`Server::confine`]; none: unconfined).
 #[derive(Default)]
 pub struct Server {
     session: Session,
     file: Option<(String, &'static str)>,
+    roots: Option<Arc<AutomationRoots>>,
 }
 
 /// The format a file name asks for when saving: `ideacraft`, `markdown`, `opml`, `freemind` or `svg`.
@@ -70,11 +76,11 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"language": language}}},
         {"name": "new_map", "description": "Start a new map, empty or from a template. Replaces the open map.",
          "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "template": {"type": "string", "enum": template_ids}, "language": language}}},
-        {"name": "open_map", "description": "Open a file: an IdeaCraft map or an import (FreeMind/Freeplane .mm, XMind .xmind, CmapTools .cxl, OPML, Markdown, Mermaid). .ideacraft.json, .mm, .opml and .md files are saved back in their own format.",
+        {"name": "open_map", "description": "Open a file: an IdeaCraft map or an import (FreeMind/Freeplane .mm, XMind .xmind, CmapTools .cxl, OPML, Markdown, Mermaid). .ideacraft.json, .mm, .opml and .md files are saved back in their own format. Only files inside the server's read root (--automation-read-root) can be opened.",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
         {"name": "import_text", "description": "Replace the map with text in another format (Markdown outline, OPML, FreeMind XML, Mermaid mindmap/flowchart, CXL, XMind content.json). The format is detected when omitted.",
          "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "format": {"type": "string", "enum": ["md", "opml", "mm", "mermaid", "cxl", "xmind", "ideacraft"]}}, "required": ["text"]}},
-        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .drawio, .svg) unless given. Without path, saves back to the file it was opened from (a .mm stays FreeMind, an .opml stays OPML) or last saved to.",
+        {"name": "save_map", "description": "Save the map. The format follows the extension (.ideacraft.json, .md, .opml, .mm, .drawio, .svg) unless given. Without path, saves back to the file it was opened from (a .mm stays FreeMind, an .opml stays OPML) or last saved to. Only inside the server's write root (--automation-write-root).",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "format": {"type": "string", "enum": ["ideacraft", "markdown", "opml", "freemind", "drawio", "svg"]}}}},
         {"name": "get_map", "description": "Read the map: title, counts, an outline with each idea's [id], and the links. format=json returns the full IdeaCraft JSON (positions, colours).",
          "inputSchema": {"type": "object", "properties": {"format": {"type": "string", "enum": ["outline", "json"]}}}},
@@ -364,6 +370,7 @@ impl Server {
             }
             "open_map" | "open" | "open_file" | "open_document" => {
                 let path = str_arg(args, "path").or_else(|| str_arg(args, "file")).ok_or("`path` is required")?;
+                self.check(path, Access::Read)?;
                 let format = self.open_file(path)?;
                 Ok(json!({"format": format, "path": path, "saves_back": self.file.is_some(), "outline": outline(self.map())}))
             }
@@ -387,6 +394,7 @@ impl Server {
                     None => source_format.or_else(|| format_for_path(&path)).unwrap_or("ideacraft").to_string(),
                 };
                 let text = self.render(&format)?;
+                self.check(&path, Access::Write)?;
                 std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))?;
                 if format != "svg" {
                     self.session.mark_saved();
@@ -628,6 +636,18 @@ impl Server {
             }
             other => Err(format!("unknown tool {other:?}")),
         }
+    }
+
+    /// From now on, `open_map` reads only inside `roots`' read root and `save_map` writes only
+    /// inside its write root (with neither, no file by path). Files opened before (`--in`) are the
+    /// operator's own.
+    pub fn confine(&mut self, roots: Arc<AutomationRoots>) {
+        self.roots = Some(roots);
+    }
+
+    /// May a tool read (or write) `path`? Always, when the server is not confined.
+    fn check(&self, path: &str, access: Access) -> Result<(), String> {
+        self.roots.as_ref().map_or(Ok(()), |r| r.check(path, access))
     }
 
     /// Opens a map or imports a file. Maps, FreeMind/Freeplane, OPML and Markdown files are then
@@ -974,5 +994,55 @@ mod tests {
         assert_eq!(lines[0]["id"], 1);
         assert_eq!(lines[1]["error"]["code"], -32700);
         assert_eq!(lines[2][0]["id"], 2);
+    }
+
+    /// `ideacraft-cli mcp --automation-read-root … --automation-write-root …`: a map the agent
+    /// opens can't steer it into reading or writing files elsewhere (`..`, absolute paths, links
+    /// out of the roots), and a refused save writes nothing.
+    #[test]
+    fn open_and_save_are_held_to_the_automation_roots() {
+        let base = std::env::temp_dir().join(format!("ideacraft-mcp-roots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for d in ["in", "out", "outside"] {
+            std::fs::create_dir_all(base.join(d)).unwrap();
+        }
+        std::fs::write(base.join("in/map.md"), "# Plan\n- Step").unwrap();
+        std::fs::write(base.join("outside/secret.md"), "# Secret\n- top secret").unwrap();
+        let p = |rel: &str| base.join(rel).to_string_lossy().into_owned();
+        let sep = std::path::MAIN_SEPARATOR;
+        let refused = |s: &mut Server, name: &str, args: Value| -> String {
+            let r = s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})).unwrap();
+            assert_eq!(r["result"]["isError"], true, "{name} should fail: {r}");
+            r["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string()
+        };
+        let mut s = Server::new();
+        s.confine(AutomationRoots::new(Some(&base.join("in")), Some(&base.join("out"))).unwrap());
+        call(&mut s, "open_map", json!({"path": p("in/map.md")}));
+        for path in [p("outside/secret.md"), format!("{}{sep}..{sep}outside{sep}secret.md", p("in")), "/etc/hostname".into()] {
+            let e = refused(&mut s, "open_map", json!({"path": path}));
+            assert!(e.contains("automation path rejected"), "{path}: {e}");
+        }
+        assert!(!call(&mut s, "get_map", json!({}))["outline"].to_string().contains("top secret"));
+        // The map came from the read root: saving it back is a write there, refused.
+        assert!(refused(&mut s, "save_map", json!({})).contains("outside the write root"));
+        call(&mut s, "save_map", json!({"path": p("out/map.mm")}));
+        for path in [p("outside/x.md"), format!("{}{sep}..{sep}outside{sep}x.svg", p("out")), "/tmp/../tmp/ideacraft-escape.md".into()] {
+            let e = refused(&mut s, "save_map", json!({"path": path}));
+            assert!(e.contains("automation path rejected"), "{path}: {e}");
+        }
+        if roots::tests::link(&base.join("outside/secret.md"), &base.join("in/leak.md"))
+            && roots::tests::link(&base.join("outside"), &base.join("out/away"))
+        {
+            assert!(refused(&mut s, "open_map", json!({"path": p("in/leak.md")})).contains("outside the read root"));
+            assert!(refused(&mut s, "save_map", json!({"path": p("out/away/x.md")})).contains("outside the write root"));
+        }
+        assert_eq!(std::fs::read_dir(base.join("outside")).unwrap().count(), 1, "nothing written outside");
+        assert!(base.join("out/map.mm").is_file() && !std::path::Path::new("/tmp/ideacraft-escape.md").exists());
+        // No roots at all (`ideacraft-cli mcp`'s default): no file by path.
+        let mut t = Server::new();
+        t.confine(AutomationRoots::new(None, None).unwrap());
+        assert!(refused(&mut t, "open_map", json!({"path": p("in/map.md")})).contains("--automation-read-root"));
+        assert!(refused(&mut t, "save_map", json!({"path": p("out/y.md")})).contains("--automation-write-root"));
+        let _ = std::fs::remove_dir_all(base);
     }
 }

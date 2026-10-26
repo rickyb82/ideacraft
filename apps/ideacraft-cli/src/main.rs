@@ -7,13 +7,15 @@
 //! ideacraft-cli convert IN OUT                             # import/export by extension
 //! ideacraft-cli outline FILE                               # Markdown outline on stdout
 //! ideacraft-cli check FILE [--lang it]                   # validate a network diagram (ip, vlan, interfaces)
-//! ideacraft-cli mcp [--in FILE]                            # MCP server on stdio, for AI agents
+//! ideacraft-cli mcp [--in FILE] [--automation-read-root DIR] [--automation-write-root DIR]
+//!                                                          # MCP server on stdio, for AI agents
 //! ```
 //! `--in` and `convert` read IdeaCraft maps and every importable format (FreeMind/Freeplane,
 //! XMind, CmapTools CXL, OPML, Markdown, Mermaid); `--out`/`convert` write by extension:
 //! `.ideacraft.json`/`.json`, `.md`, `.opml` or `.mm`.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use ideacraft_engine::core::Map;
@@ -28,7 +30,9 @@ const USAGE: &str = "usage:
   ideacraft-cli convert IN OUT
   ideacraft-cli outline FILE
   ideacraft-cli check FILE [--lang it]   (validate a network diagram: ip, subnets, vlan, gateways, interfaces)
-  ideacraft-cli mcp [--in FILE | FILE] [--template ID]   (Model Context Protocol server on stdio)";
+  ideacraft-cli mcp [--in FILE | FILE] [--template ID] [--automation-read-root DIR] [--automation-write-root DIR]
+                     (Model Context Protocol server on stdio; the agent reads files only inside the read
+                     root and writes only inside the write root, none without them)";
 
 fn read(path: &str) -> Result<Map, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
@@ -71,8 +75,27 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         Some("mcp") => {
             let mut server = ideacraft_mcp::Server::new();
+            let (mut read_root, mut write_root): (Option<String>, Option<String>) = (None, None);
             let mut it = args.iter().skip(1);
             while let Some(a) = it.next() {
+                let (flag, inline) = match a.split_once('=') {
+                    Some((f, v)) if f.starts_with("--automation-") => (f, Some(v.to_string())),
+                    _ => (a.as_str(), None),
+                };
+                if let Some(slot) = match flag {
+                    "--automation-read-root" => Some(&mut read_root),
+                    "--automation-write-root" => Some(&mut write_root),
+                    _ => None,
+                } {
+                    let dir = match inline {
+                        Some(v) => v,
+                        None => it.next().cloned().ok_or_else(|| format!("mcp: {flag} needs a folder"))?,
+                    };
+                    if slot.replace(dir).is_some() {
+                        return Err(format!("mcp: {flag} given more than once"));
+                    }
+                    continue;
+                }
                 match a.as_str() {
                     "--in" | "--open" | "--file" => {
                         let path = it.next().ok_or("--in needs a file")?;
@@ -92,6 +115,12 @@ fn run(args: &[String]) -> Result<(), String> {
                     other => return Err(format!("mcp: unknown option {other}\n{USAGE}")),
                 }
             }
+            // `--in` files are the operator's own, opened above before the roots apply.
+            let roots = ideacraft_mcp::roots::AutomationRoots::new(read_root.as_deref().map(Path::new), write_root.as_deref().map(Path::new))
+                .map_err(|e| format!("mcp: {e}"))?;
+            let show = |p: Option<&Path>| p.map_or_else(|| "none".to_string(), |p| p.display().to_string());
+            eprintln!("ideacraft-cli: files confined: read root {}, write root {}", show(roots.read_root()), show(roots.write_root()));
+            server.confine(roots);
             eprintln!("ideacraft-cli: MCP server on stdio (protocol {}); close stdin to stop", ideacraft_mcp::PROTOCOL_VERSION);
             let stdin = std::io::stdin();
             server.serve(stdin.lock(), std::io::stdout()).map_err(|e| format!("mcp: {e}"))
@@ -195,6 +224,22 @@ mod tests {
         ] {
             let args: Vec<String> = args.into_iter().map(String::from).collect();
             assert!(run(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn mcp_root_flags_are_checked_before_the_server_starts() {
+        let dir = std::env::temp_dir().to_string_lossy().into_owned();
+        for (args, says) in [
+            (vec!["mcp", "--automation-read-root", "/definitely/not/a/folder"], "read root"),
+            (vec!["mcp", "--automation-write-root=/definitely/not/a/folder"], "write root"),
+            (vec!["mcp", "--automation-read-root"], "needs a folder"),
+            (vec!["mcp", "--automation-write-root="], "write root"),
+            (vec!["mcp", "--automation-read-root", &dir, "--automation-read-root", &dir], "more than once"),
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            let e = run(&args).unwrap_err();
+            assert!(e.contains(says), "{args:?}: {e}");
         }
     }
 }

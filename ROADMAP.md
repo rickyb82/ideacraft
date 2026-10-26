@@ -1,6 +1,6 @@
 # IdeaCraft roadmap
 
-> **Last updated:** 2026-10-12 · **Stage:** 0.1 preview
+> **Last updated:** 2026-10-26 · **Stage:** 0.1 preview
 
 IdeaCraft aims to be the open, fast, scriptable place to think in maps: concept maps, mind maps
 and idea boards, with the polish of commercial canvas tools and none of the lock-in.
@@ -60,3 +60,4 @@ and idea boards, with the polish of commercial canvas tools and none of the lock
 | 2026-10-12 | Diagram mode (Visio-style): stencils, styled connectors, properties with status lights, align/distribute, draw.io import/export, diagram templates, MCP diagram tools |
 | 2026-10-12 | Layers and groups, UML/BPMN/network stencils (74), network check (IP/VLAN/interfaces) in UI, CLI and MCP, MCP prompts and `build_map` for natural-language maps |
 | 2026-10-23 | Release pipeline: original app icon (`cargo xtask icons`), Windows MSI + portable zip, macOS universal DMG + CLI zip, draft GitHub releases (`packaging/`, `release.yml`) |
+| 2026-10-26 | Security: `ideacraft-cli mcp` opens files only inside `--automation-read-root` and saves only inside `--automation-write-root` (links followed, `..` and absolute paths outside refused; no file by path without them); zip 9 (RUSTSEC-2026-0367/0368/0369), tokio 1.54.1 |
